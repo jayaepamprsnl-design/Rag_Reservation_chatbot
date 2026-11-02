@@ -1,0 +1,53 @@
+services:
+  # ── API backend ─────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      target: runtime
+    image: parking-rag-api:latest
+    env_file: .env
+    environment:
+      # Data paths inside the shared volume
+      CHROMA_PERSIST_DIR: /data/chroma_db
+      CHROMA_COLLECTION: parking_static
+      DATABASE_URL: sqlite:////data/parking.db
+    volumes:
+      - parking_data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s   # allow time for init.py seed+ingest
+
+  # ── Streamlit UI ─────────────────────────────────────────────────────────────
+  ui:
+    build:
+      context: .
+      target: runtime
+    image: parking-rag-api:latest
+    command:
+      - streamlit
+      - run
+      - app/ui/streamlit_app.py
+      - --server.port=8501
+      - --server.address=0.0.0.0
+      - --server.headless=true
+    env_file: .env
+    environment:
+      API_URL: http://api:8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+# ── Named volume for persistent data ─────────────────────────────────────────
+# Stores SQLite DB and ChromaDB across container restarts.
+volumes:
+  parking_data:
+    driver: local
