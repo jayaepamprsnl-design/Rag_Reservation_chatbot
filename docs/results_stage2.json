@@ -1,0 +1,347 @@
+{
+  "metadata": {
+    "timestamp": "2026-11-02T14:23:27",
+    "n_bench": 30,
+    "n_concurrent": 20,
+    "db": "sqlite:///:memory: StaticPool",
+    "llm": "MockLLM offline / _NullLLM"
+  },
+  "decision_parsing": {
+    "overall_accuracy": 1.0,
+    "total_correct": 30,
+    "total": 30,
+    "per_category": {
+      "ambiguous": {
+        "n": 2,
+        "correct": 2,
+        "accuracy": 1.0
+      },
+      "approve": {
+        "n": 8,
+        "correct": 8,
+        "accuracy": 1.0
+      },
+      "no_decision": {
+        "n": 4,
+        "correct": 4,
+        "accuracy": 1.0
+      },
+      "refuse_no_reason": {
+        "n": 4,
+        "correct": 4,
+        "accuracy": 1.0
+      },
+      "refuse_with_reason": {
+        "n": 8,
+        "correct": 8,
+        "accuracy": 1.0
+      },
+      "unrelated": {
+        "n": 4,
+        "correct": 4,
+        "accuracy": 1.0
+      }
+    },
+    "per_item": [
+      {
+        "id": 1,
+        "category": "approve",
+        "text": "approve 42",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 2,
+        "category": "approve",
+        "text": "APPROVE reservation 7",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 3,
+        "category": "approve",
+        "text": "looks good, approve 12",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 4,
+        "category": "approve",
+        "text": "ok 15",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 5,
+        "category": "approve",
+        "text": "confirmed, let this one through",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 6,
+        "category": "approve",
+        "text": "accepted \u2014 go ahead with booking 9",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 7,
+        "category": "approve",
+        "text": "approved",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 8,
+        "category": "approve",
+        "text": "it is fine, approve 18",
+        "expected": "APPROVE",
+        "predicted": "APPROVE",
+        "correct": true
+      },
+      {
+        "id": 9,
+        "category": "refuse_with_reason",
+        "text": "refuse 5 because the lot is closed for maintenance",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 10,
+        "category": "refuse_with_reason",
+        "text": "reject 11 because we are fully booked today",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 11,
+        "category": "refuse_with_reason",
+        "text": "deny 6 because of ongoing security maintenance",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 12,
+        "category": "refuse_with_reason",
+        "text": "decline 20 because the car park is flooded",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 13,
+        "category": "refuse_with_reason",
+        "text": "refuse 3 because it is double-booked with an event",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 14,
+        "category": "refuse_with_reason",
+        "text": "reject 16 because owner requested last-minute cancellation",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 15,
+        "category": "refuse_with_reason",
+        "text": "deny 2 because contractor vehicles need access",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 16,
+        "category": "refuse_with_reason",
+        "text": "refuse 8 since the lot is temporarily closed",
+        "expected": "REFUSE",
+        "predicted": "REFUSE",
+        "correct": true
+      },
+      {
+        "id": 17,
+        "category": "refuse_no_reason",
+        "text": "refuse 3",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 18,
+        "category": "refuse_no_reason",
+        "text": "reject 14",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 19,
+        "category": "refuse_no_reason",
+        "text": "deny reservation 1",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 20,
+        "category": "refuse_no_reason",
+        "text": "decline 10",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 21,
+        "category": "no_decision",
+        "text": "show pending",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 22,
+        "category": "no_decision",
+        "text": "list all pending reservations",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 23,
+        "category": "no_decision",
+        "text": "what requests are waiting?",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 24,
+        "category": "no_decision",
+        "text": "how many bookings need review?",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 25,
+        "category": "ambiguous",
+        "text": "approve or refuse 7?",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 26,
+        "category": "ambiguous",
+        "text": "should I accept or reject this?",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 27,
+        "category": "unrelated",
+        "text": "hello, how are you?",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 28,
+        "category": "unrelated",
+        "text": "thanks for the help",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 29,
+        "category": "unrelated",
+        "text": "what is the weather like today?",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      },
+      {
+        "id": 30,
+        "category": "unrelated",
+        "text": "can you book a taxi for me?",
+        "expected": "CLARIFICATION",
+        "predicted": "CLARIFICATION",
+        "correct": true
+      }
+    ]
+  },
+  "latency": {
+    "n_iterations": 30,
+    "escalation": {
+      "mean_ms": 2.14,
+      "p95_ms": 1.95,
+      "min_ms": 1.54,
+      "max_ms": 15.56
+    },
+    "decision_to_notification": {
+      "mean_ms": 1.79,
+      "p95_ms": 2.74,
+      "min_ms": 1.57,
+      "max_ms": 3.54
+    },
+    "total_round_trip": {
+      "mean_ms": 3.93,
+      "p95_ms": 4.36,
+      "min_ms": 3.12,
+      "max_ms": 19.1
+    }
+  },
+  "reliability": {
+    "n_workers": 20,
+    "wall_time_s": 0.808,
+    "n_success": 20,
+    "n_failure": 0,
+    "failures": [],
+    "no_lost_requests": true,
+    "no_duplicates": true,
+    "no_audit_dups": true,
+    "db_mode": "file-based SQLite + WAL + NullPool",
+    "worker_latency_ms": {
+      "mean": 428.39,
+      "p95": 644.53
+    }
+  },
+  "double_booking": {
+    "n_concurrent_approvals": 2,
+    "n_success": 1,
+    "n_failure": 1,
+    "final_reservation_status": "confirmed",
+    "final_available_spaces": 0,
+    "invariant_held": true,
+    "db_mode": "file-based SQLite + WAL + NullPool",
+    "outcomes": [
+      {
+        "admin_id": "admin-0",
+        "success": false,
+        "error": "Reservation 1 cannot be approved: current status is 'ReservationStatus.CONFIRMED' (only PENDING reservations can be approved).",
+        "elapsed_ms": 9.09
+      },
+      {
+        "admin_id": "admin-1",
+        "success": true,
+        "status": "confirmed",
+        "elapsed_ms": 5.89
+      }
+    ]
+  }
+}

@@ -1,4 +1,16 @@
+###############################################################################
+# CityPark RAG Chatbot — Stage 2 docker-compose
+#
+# Default services (always started):
+#   api   FastAPI backend on :8000
+#   ui    Combined Streamlit app (Chat + Admin Panel) on :8501
+#
+# Optional profile — enables the Mailpit SMTP capture service:
+#   docker compose --profile mailpit up
+###############################################################################
+
 services:
+
   # ── API backend ─────────────────────────────────────────────────────────────
   api:
     build:
@@ -7,10 +19,11 @@ services:
     image: parking-rag-api:latest
     env_file: .env
     environment:
-      # Data paths inside the shared volume
       CHROMA_PERSIST_DIR: /data/chroma_db
       CHROMA_COLLECTION: parking_static
       DATABASE_URL: sqlite:////data/parking.db
+      ADMIN_API_BASE_URL: http://localhost:8000
+      ANONYMIZED_TELEMETRY: "false"
     volumes:
       - parking_data:/data
     ports:
@@ -21,9 +34,10 @@ services:
       interval: 30s
       timeout: 10s
       retries: 5
-      start_period: 60s   # allow time for init.py seed+ingest
+      start_period: 90s
 
-  # ── Streamlit UI ─────────────────────────────────────────────────────────────
+  # ── Combined Streamlit UI (Chat + Admin Panel on one port) ───────────────────
+  # The Admin Panel tab requires an ADMIN_API_KEY entered at login.
   ui:
     build:
       context: .
@@ -39,6 +53,8 @@ services:
     env_file: .env
     environment:
       API_URL: http://api:8000
+      # ADMIN_API_KEY from env_file pre-fills the admin login form.
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-change-me-before-production}
     ports:
       - "8501:8501"
     depends_on:
@@ -46,8 +62,17 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-# ── Named volume for persistent data ─────────────────────────────────────────
-# Stores SQLite DB and ChromaDB across container restarts.
+  # ── Mailpit — local SMTP capture (optional profile) ──────────────────────────
+  # docker compose --profile mailpit up
+  mailpit:
+    profiles: [mailpit]
+    image: axllent/mailpit:latest
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    restart: unless-stopped
+
+# ── Named volume ─────────────────────────────────────────────────────────────
 volumes:
   parking_data:
     driver: local

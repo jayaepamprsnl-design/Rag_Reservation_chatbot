@@ -6,7 +6,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.db.models import LotReservation, ParkingLot, Price, ParkingSpace, WorkingHours
+from app.db.models import (
+    ApprovalRequest, LotReservation, ParkingLot, Price, ParkingSpace, WorkingHours,
+)
 from app.db.session import SessionLocal, create_tables
 
 
@@ -14,7 +16,8 @@ def seed() -> None:
     create_tables()
     db = SessionLocal()
     try:
-        for model in (LotReservation, ParkingLot, ParkingSpace, WorkingHours, Price):
+        # Delete child tables before parents to respect FK ordering
+        for model in (ApprovalRequest, LotReservation, ParkingLot, ParkingSpace, WorkingHours, Price):
             db.query(model).delete()
 
         # --- Parking lots -------------------------------------------------

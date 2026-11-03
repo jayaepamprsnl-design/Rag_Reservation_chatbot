@@ -1,14 +1,24 @@
+import enum as _pyenum
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean, Column, Date, DateTime, Float, ForeignKey,
-    Integer, String, Time,
+    Boolean, Column, Date, DateTime, Enum as SAEnum, Float, ForeignKey,
+    Integer, String, Text, Time,
 )
 from sqlalchemy.orm import DeclarativeBase, relationship
 
 
 class Base(DeclarativeBase):
     pass
+
+
+class ReservationStatus(str, _pyenum.Enum):
+    """Approval-workflow lifecycle for LotReservation.status."""
+    PENDING   = "pending"
+    CONFIRMED = "confirmed"
+    REFUSED   = "refused"
+    CANCELLED = "cancelled"
+    EXPIRED   = "expired"
 
 
 class ParkingLot(Base):
@@ -36,10 +46,24 @@ class LotReservation(Base):
     lot_id = Column(Integer, ForeignKey("parking_lots.id"), nullable=False)
     start_time = Column(DateTime, nullable=False)
     end_time = Column(DateTime, nullable=False)
-    status = Column(String(20), nullable=False, default="confirmed")
+    # values_callable ensures we store the lowercase .value ("pending", "confirmed", …)
+    # not the member .name ("PENDING", "CONFIRMED", …).  This keeps the column
+    # compatible with the existing "confirmed" / "cancelled" rows.
+    status = Column(
+        SAEnum(ReservationStatus, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
+        default=ReservationStatus.PENDING,
+    )
+    session_id = Column(String(100), nullable=True)
+    admin_decision_reason = Column(Text, nullable=True)
+    decided_at = Column(DateTime, nullable=True)
+    decided_by = Column(String(100), nullable=True)
+    # server_default="0" ensures ALTER TABLE ADD COLUMN works on existing SQLite DBs
+    notified_user = Column(Boolean, default=False, nullable=False, server_default="0")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     lot = relationship("ParkingLot", back_populates="lot_reservations")
+    approval_requests = relationship("ApprovalRequest", back_populates="reservation")
 
 
 class ParkingSpace(Base):
@@ -86,3 +110,19 @@ class Reservation(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     space = relationship("ParkingSpace", back_populates="reservations")
+
+
+class ApprovalRequest(Base):
+    """Audit trail of every agent-to-admin communication for a reservation."""
+    __tablename__ = "approval_requests"
+
+    id = Column(Integer, primary_key=True, index=True)
+    reservation_id = Column(Integer, ForeignKey("lot_reservations.id"), nullable=False)
+    status = Column(String(20), nullable=False, default="sent")   # sent | responded
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    sent_at = Column(DateTime, nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    channel = Column(String(50), nullable=False, default="api")
+    request_text = Column(Text, nullable=True)
+
+    reservation = relationship("LotReservation", back_populates="approval_requests")

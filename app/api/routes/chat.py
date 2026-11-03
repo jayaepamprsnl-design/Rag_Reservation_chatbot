@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.chat.conversation import get_or_create_session
 from app.chat.reservation import (
     ReservationState,
+    _COLLECTING_STATES,
     advance as reservation_advance,
     get_state as reservation_get_state,
     prefill_name as reservation_prefill_name,
@@ -26,14 +27,7 @@ router = APIRouter(tags=["chat"])
 # PII types the reservation SM receives unmasked (name + plate must be stored raw).
 _RESERVATION_SKIP = ["PERSON", "LICENSE_PLATE"]
 
-# States where the user is actively providing a field the SM needs raw.
-_COLLECTING_STATES = {
-    ReservationState.ASK_NAME,
-    ReservationState.ASK_CAR_PLATE,
-    ReservationState.ASK_LOT,
-    ReservationState.ASK_START,
-    ReservationState.ASK_END,
-}
+# _COLLECTING_STATES is now imported from reservation.py
 
 # Pattern: "book/reserve for <Name>" — used to pre-populate the name field so
 # the user does not have to repeat themselves.
@@ -55,6 +49,10 @@ def _extract_name_from_request(text: str) -> str:
 
 class ChatRequest(BaseModel):
     message: str
+    # WARNING: callers MUST supply a unique session_id per conversation.
+    # The default "default" value means all clients that omit it share one
+    # in-memory session, corrupting each other's reservation state.
+    # A UUID generated client-side is the recommended value.
     session_id: str = "default"
 
 
@@ -64,6 +62,7 @@ class ChatResponse(BaseModel):
     sources: list[str] = []
     intent: str = "UNKNOWN"
     guardrail_flags: list[str] = []
+    reservation_id: int | None = None  # set when a LotReservation is active
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -102,6 +101,7 @@ async def chat(
     sources: list[str] = []
     intent: str = "UNKNOWN"
     guardrail_flags: list[str] = []
+    _active_res_id: int | None = None   # tracks LotReservation.id across branches
 
     # ── Route ────────────────────────────────────────────────────────────────
     if in_reservation:
@@ -111,6 +111,7 @@ async def chat(
         intent  = RouterIntent.RESERVATION.value
         if reply.reservation_id:
             sources = ["database"]
+            _active_res_id = reply.reservation_id
 
     else:
         route_resp = router_handle(
@@ -123,17 +124,15 @@ async def chat(
         intent  = route_resp.intent.value
 
         if route_resp.intent == RouterIntent.RESERVATION:
-            # Initialise the state machine.
-            opening = reservation_start(sid)
-
-            # Try to pre-populate name from "reserve for <Name>" pattern so the
-            # user doesn't have to type their name a second time.
-            extracted_name = _extract_name_from_request(raw_text)
-            if extracted_name:
-                next_prompt = reservation_prefill_name(sid, extracted_name)
-                answer = next_prompt if next_prompt else opening
-            else:
-                answer = opening
+            # advance() handles IDLE→start internally and applies multi-slot
+            # extraction, so any name / date / time given in the first message
+            # is captured without asking again.
+            reply   = reservation_advance(sid, raw_text, db)
+            answer  = reply.message
+            intent  = RouterIntent.RESERVATION.value
+            if reply.reservation_id:
+                sources = ["database"]
+                _active_res_id = reply.reservation_id
 
             # The SM is now active — allow the output guard to pass through
             # PERSON/PLATE so the customer sees their name in the response.
@@ -172,4 +171,5 @@ async def chat(
         sources=sources,
         intent=intent,
         guardrail_flags=guardrail_flags,
+        reservation_id=_active_res_id,
     )

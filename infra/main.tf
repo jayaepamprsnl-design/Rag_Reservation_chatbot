@@ -1,9 +1,9 @@
 ###############################################################################
-# CityPark RAG Chatbot — container deployment (Docker provider)
+# CityPark RAG Chatbot — Stage 2 container deployment (Docker provider)
 #
-# This describes a LOCAL Docker deployment equivalent to docker-compose.yml,
-# expressed as Terraform so it can be adapted to remote container platforms
-# (AWS ECS, GCP Cloud Run, Azure ACI) by swapping the provider block.
+# Describes a LOCAL Docker deployment equivalent to docker-compose.yml.
+# Adapt to remote platforms (AWS ECS, GCP Cloud Run, Azure ACI) by swapping
+# the provider block and the resource types.
 #
 # Prerequisites:
 #   terraform init   # pulls kreuzwerker/docker provider
@@ -23,7 +23,7 @@ terraform {
 
 provider "docker" {}
 
-# ── Build the shared image ────────────────────────────────────────────────────
+# ── Shared image ──────────────────────────────────────────────────────────────
 
 resource "docker_image" "parking_rag" {
   name = "${var.image_name}:${var.image_tag}"
@@ -36,7 +36,6 @@ resource "docker_image" "parking_rag" {
   }
 
   triggers = {
-    # Rebuild when requirements change.
     requirements_hash = filemd5("${path.module}/../requirements.txt")
   }
 }
@@ -82,12 +81,26 @@ resource "docker_container" "api" {
   }
 
   env = [
+    # Stage 1
     "CHROMA_COLLECTION=${var.chroma_collection}",
     "CHROMA_PERSIST_DIR=/data/chroma_db",
     "DATABASE_URL=sqlite:////data/parking.db",
     "OPENAI_API_KEY=${var.openai_api_key}",
     "OPENAI_MODEL=${var.openai_model}",
     "LOG_LEVEL=INFO",
+    # Stage 2 — Admin API
+    "ADMIN_API_KEY=${var.admin_api_key}",
+    "ADMIN_API_BASE_URL=${var.admin_api_base_url}",
+    # Stage 2 — Email channel
+    "ADMIN_EMAIL_ENABLED=${var.admin_email_enabled}",
+    "SMTP_HOST=${var.smtp_host}",
+    "SMTP_PORT=${var.smtp_port}",
+    "SMTP_USER=${var.smtp_user}",
+    "SMTP_PASSWORD=${var.smtp_password}",
+    "ADMIN_EMAIL=${var.admin_email}",
+    "EMAIL_FROM=${var.email_from}",
+    "EMAIL_TOKEN_SECRET=${var.email_token_secret}",
+    "EMAIL_TOKEN_MAX_AGE_SECONDS=${var.email_token_max_age_seconds}",
   ]
 
   healthcheck {
@@ -95,11 +108,11 @@ resource "docker_container" "api" {
     interval     = "30s"
     timeout      = "10s"
     retries      = 5
-    start_period = "60s"
+    start_period = "90s"
   }
 }
 
-# ── UI container ──────────────────────────────────────────────────────────────
+# ── User Streamlit chat UI ────────────────────────────────────────────────────
 
 resource "docker_container" "ui" {
   name    = "${var.project_name}_ui"
@@ -129,3 +142,61 @@ resource "docker_container" "ui" {
 
   depends_on = [docker_container.api]
 }
+
+# ── Admin Streamlit dashboard ─────────────────────────────────────────────────
+
+resource "docker_container" "admin_ui" {
+  name    = "${var.project_name}_admin_ui"
+  image   = docker_image.parking_rag.image_id
+  restart = "unless-stopped"
+
+  command = [
+    "streamlit", "run", "app/ui/admin_app.py",
+    "--server.port=8502",
+    "--server.address=0.0.0.0",
+    "--server.headless=true",
+  ]
+
+  networks_advanced {
+    name    = docker_network.parking_net.name
+    aliases = ["admin-ui"]
+  }
+
+  ports {
+    internal = 8502
+    external = var.admin_ui_port
+  }
+
+  env = [
+    "API_URL=http://api:8000",
+    # Pre-fills the login form in the Streamlit admin app.
+    "ADMIN_API_KEY=${var.admin_api_key}",
+  ]
+
+  depends_on = [docker_container.api]
+}
+
+# ── Mailpit (optional — SMTP capture for local dev) ───────────────────────────
+# Uncomment to deploy.  Set admin_email_enabled=true and smtp_host="mailpit"
+# to route email notifications through Mailpit.
+#
+# resource "docker_container" "mailpit" {
+#   name    = "${var.project_name}_mailpit"
+#   image   = "axllent/mailpit:latest"
+#   restart = "unless-stopped"
+#
+#   networks_advanced {
+#     name    = docker_network.parking_net.name
+#     aliases = ["mailpit"]
+#   }
+#
+#   ports {
+#     internal = 8025
+#     external = var.mailpit_ui_port
+#   }
+#
+#   ports {
+#     internal = 1025
+#     external = var.mailpit_smtp_port
+#   }
+# }

@@ -4,8 +4,13 @@ output "api_url" {
 }
 
 output "ui_url" {
-  description = "Streamlit UI URL."
+  description = "User Streamlit chat UI URL."
   value       = "http://localhost:${var.ui_port}"
+}
+
+output "admin_ui_url" {
+  description = "Admin Streamlit dashboard URL."
+  value       = "http://localhost:${var.admin_ui_port}"
 }
 
 output "docker_network" {
@@ -14,6 +19,6 @@ output "docker_network" {
 }
 
 output "data_volume" {
-  description = "Named Docker volume holding SQLite + ChromaDB."
+  description = "Named Docker volume holding SQLite DB + ChromaDB."
   value       = docker_volume.parking_data.name
 }

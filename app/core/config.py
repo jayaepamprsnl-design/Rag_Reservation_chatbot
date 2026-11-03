@@ -36,6 +36,22 @@ class Settings(BaseSettings):
     # RAG
     retrieval_top_k: int = 5
 
+    # Admin API
+    admin_api_base_url: str = "http://localhost:8000"
+    admin_api_key: str = ""
+
+    # Email channel (opt-in via ADMIN_EMAIL_ENABLED=true)
+    admin_email_enabled: bool = False
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    smtp_user: str = ""
+    smtp_password: str = ""
+    admin_email: str = "admin@citypark.example.com"
+    email_from: str = "no-reply@citypark.example.com"
+    # Secret for signing single-use action tokens — must be overridden in prod
+    email_token_secret: str = "change-me-in-production"
+    email_token_max_age_seconds: int = 86400          # 24 h
+
 
 @lru_cache
 def get_settings() -> Settings:

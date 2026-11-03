@@ -145,7 +145,8 @@ def test_happy_path_full_flow(sid, db):
     assert "confirm" in r.message.lower()
 
     r = advance(sid, "confirm", db)
-    assert r.state == ReservationState.DONE
+    # Stage-2: confirmation escalates to admin; final state is AWAITING_APPROVAL
+    assert r.state == ReservationState.AWAITING_APPROVAL
     assert r.reservation_id is not None
     assert "CPK-" in r.message
     assert r.cancelled is False
@@ -175,12 +176,21 @@ def test_lot_selection_by_id_2(sid, db):
     assert "CityPark Eastside" in r.message
 
 
-def test_done_session_is_idempotent(sid, db):
+def test_confirm_transitions_to_awaiting_approval(sid, db):
+    """After confirm, state is AWAITING_APPROVAL (pending admin decision)."""
+    _run_to_confirm(sid, db)
+    r = advance(sid, "confirm", db)
+    assert r.state == ReservationState.AWAITING_APPROVAL
+    assert r.reservation_id is not None
+
+
+def test_awaiting_approval_preserves_reservation_id_on_next_message(sid, db):
+    """Messages in AWAITING_APPROVAL return the same reservation_id."""
     _run_to_confirm(sid, db)
     r1 = advance(sid, "confirm", db)
-    r2 = advance(sid, "confirm", db)
-    assert r1.reservation_id == r2.reservation_id
-    assert r2.state == ReservationState.DONE
+    r2 = advance(sid, "hello", db)
+    assert r2.reservation_id == r1.reservation_id
+    assert r2.state == ReservationState.AWAITING_APPROVAL
 
 
 # ---------------------------------------------------------------------------
@@ -406,7 +416,8 @@ def test_confirm_garbage_input_re_asks(sid, db):
 def test_confirm_aliases_accepted(sid, db):
     _run_to_confirm(sid, db)
     r = advance(sid, "yes", db)
-    assert r.state == ReservationState.DONE
+    # Stage-2: confirmation goes to AWAITING_APPROVAL, not DONE
+    assert r.state == ReservationState.AWAITING_APPROVAL
     assert r.reservation_id is not None
 
 
@@ -448,3 +459,117 @@ def test_reset_returns_to_idle(sid, db):
     assert get_state(sid) == ReservationState.ASK_CAR_PLATE
     reset(sid)
     assert get_state(sid) == ReservationState.IDLE
+
+
+# ---------------------------------------------------------------------------
+# AWAITING_APPROVAL — dedicated tests
+# ---------------------------------------------------------------------------
+
+from app.db.repository import approve_reservation, refuse_reservation
+
+
+def _confirm(sid, db):
+    """Drive to AWAITING_APPROVAL and return the ReplyResult."""
+    _run_to_confirm(sid, db)
+    return advance(sid, "confirm", db)
+
+
+def test_awaiting_approval_status_query(sid, db):
+    _confirm(sid, db)
+    r = advance(sid, "what's the status?", db)
+    assert r.state == ReservationState.AWAITING_APPROVAL
+    assert "PENDING" in r.message.upper() or "status" in r.message.lower()
+
+
+def test_awaiting_approval_status_query_shows_reference(sid, db):
+    rc = _confirm(sid, db)
+    r = advance(sid, "status", db)
+    assert f"CPK-{rc.reservation_id:06d}" in r.message
+
+
+def test_awaiting_approval_cancel_returns_idle(sid, db):
+    _confirm(sid, db)
+    r = advance(sid, "cancel", db)
+    assert r.state == ReservationState.IDLE
+    assert r.cancelled is True
+
+
+def test_awaiting_approval_cancel_marks_cancelled_in_db(sid, db):
+    from app.db.models import LotReservation, ReservationStatus
+    rc = _confirm(sid, db)
+    advance(sid, "cancel my request", db)
+    res = db.get(LotReservation, rc.reservation_id)
+    assert res.status == ReservationStatus.CANCELLED
+
+
+def test_awaiting_approval_new_booking_attempt_blocked(sid, db):
+    _confirm(sid, db)
+    r = advance(sid, "I want to book again", db)
+    assert r.state == ReservationState.AWAITING_APPROVAL
+    assert "pending" in r.message.lower() or "awaiting" in r.message.lower()
+
+
+def test_awaiting_approval_delivers_approved_notification(sid, db):
+    """When admin approves, user's next message receives the APPROVED notice."""
+    rc = _confirm(sid, db)
+    res_id = rc.reservation_id
+    # Simulate admin approval
+    approve_reservation(db, res_id, admin="test-admin", note="")
+    r = advance(sid, "hi", db)
+    assert r.state == ReservationState.DONE
+    assert "APPROVED" in r.message.upper()
+    assert f"CPK-{res_id:06d}" in r.message
+
+
+def test_awaiting_approval_delivers_refused_notification(sid, db):
+    """When admin refuses, user's next message receives the REFUSED notice."""
+    rc = _confirm(sid, db)
+    res_id = rc.reservation_id
+    refuse_reservation(db, res_id, admin="test-admin", reason="lot closed")
+    r = advance(sid, "hi", db)
+    assert r.state == ReservationState.IDLE
+    assert "lot closed" in r.message.lower()
+    assert r.cancelled is True
+
+
+def test_awaiting_approval_notification_delivered_only_once(sid, db):
+    """Notification must be marked as delivered and not repeated."""
+    rc = _confirm(sid, db)
+    approve_reservation(db, rc.reservation_id, admin="test-admin")
+    r1 = advance(sid, "hi", db)
+    assert r1.state == ReservationState.DONE
+    # Second message — now DONE, no repeat notification
+    r2 = advance(sid, "hi again", db)
+    assert r2.state == ReservationState.DONE
+    assert "APPROVED" not in r2.message.upper()
+
+
+def test_server_restart_recovery_from_db(sid, db):
+    """After clearing in-memory state, advance() recovers from the DB."""
+    from app.chat.reservation import _sessions
+    rc = _confirm(sid, db)
+    # Simulate server restart by clearing in-memory state
+    _sessions.pop(sid, None)
+    # Next message should recover to AWAITING_APPROVAL
+    r = advance(sid, "what happened?", db)
+    assert r.state == ReservationState.AWAITING_APPROVAL
+    assert r.reservation_id == rc.reservation_id
+
+
+def test_server_restart_delivers_decision_after_recovery(sid, db):
+    """After restart, a pending-but-now-decided reservation is delivered."""
+    from app.chat.reservation import _sessions
+    rc = _confirm(sid, db)
+    approve_reservation(db, rc.reservation_id, admin="test-admin")
+    _sessions.pop(sid, None)  # simulate restart
+    r = advance(sid, "hello", db)
+    assert r.state == ReservationState.DONE
+    assert "APPROVED" in r.message.upper()
+
+
+def test_start_blocked_while_awaiting_approval(sid, db):
+    """Calling start() while AWAITING_APPROVAL returns reminder, not reset."""
+    _confirm(sid, db)
+    msg = start(sid)
+    assert get_state(sid) == ReservationState.AWAITING_APPROVAL
+    assert "pending" in msg.lower() or "awaiting" in msg.lower() or "CPK-" in msg

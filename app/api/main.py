@@ -11,6 +11,7 @@ GET  /reservations      → list reservations (from routes/reservations.py)
 from __future__ import annotations
 
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -19,8 +20,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.reservations import router as reservations_router
+from app.api.routes.reservations import sessions_router
 from app.chat.conversation import clear_session
 from app.chat.reservation import reset as reset_reservation
 from app.core.config import settings
@@ -61,31 +64,42 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
+    # allow_origins=["*"] is incompatible with allow_credentials=True (browsers
+    # reject it).  Use explicit origins in production; the wildcard is safe only
+    # for fully public, credential-free APIs.  Admin routes are protected by the
+    # X-Admin-Key header, not cookies, so credentials=False is correct here.
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
 )
 
 # ── Request logging ───────────────────────────────────────────────────────────
 
 
 @app.middleware("http")
-async def log_requests(request: Request, call_next):
+async def log_requests(request: Request, call_next) -> JSONResponse:
+    """Assign a unique request ID for log correlation and measure latency."""
+    request_id = str(uuid.uuid4())[:8]
     start = time.perf_counter()
     try:
         response = await call_next(request)
     except Exception:
-        logger.exception("Unhandled error in %s %s", request.method, request.url.path)
+        logger.exception(
+            "Unhandled error req_id=%s %s %s",
+            request_id, request.method, request.url.path,
+        )
         raise
     ms = (time.perf_counter() - start) * 1000
     logger.info(
-        "http method=%s path=%s status=%d duration_ms=%.1f",
+        "http req_id=%s method=%s path=%s status=%d duration_ms=%.1f",
+        request_id,
         request.method,
         request.url.path,
         response.status_code,
         ms,
     )
+    response.headers["X-Request-ID"] = request_id
     return response
 
 
@@ -107,6 +121,8 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 app.include_router(chat_router)
 app.include_router(reservations_router)
+app.include_router(sessions_router)
+app.include_router(admin_router)
 
 
 # ---------------------------------------------------------------------------
