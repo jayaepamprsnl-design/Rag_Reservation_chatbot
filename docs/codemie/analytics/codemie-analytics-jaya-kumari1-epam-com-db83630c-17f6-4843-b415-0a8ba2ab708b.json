@@ -29,7 +29,7 @@
         "withLog": 1
       }
     ],
-    "userEmail": "shalini_singh1@epam.com",
+    "userEmail": "jaya_kumari1@epam.com",
     "periodStart": "2026-11-04T05:43:30.894Z",
     "periodEnd": "2026-11-04T07:00:03.905Z"
   },
@@ -39,7 +39,7 @@
       "agentName": "claude",
       "provider": "ai-run-sso",
       "title": "Project: parking-rag-chatbot, Stages 1-3 done. Stage 4: orchestrate everything with LangGraph. Rules: don't break existing tests; don't modify app/guardrails/pii_filter.py, app/chat/intent_router.py, app/core/logging_config.py; Windows; no hardcoded secrets; offline-capable (MockLLM). Inspect app/chat/*, app/agents/*, app/mcp_server/*, app/api/routes/*, requirements.txt. Then briefly propose: graph nodes/edges/state schema, where the human interrupt happens, how the API and UI resume the graph, and a Mermaid diagram. Wait for my \"go\".",
-      "project": "C:\\Users\\ShaliniSingh1\\Desktop\\parking-rag-chatbot",
+      "project": "C:\\Users\\jayakumari1\\Desktop\\parking-rag-chatbot",
       "branch": "stage_1",
       "startTime": 1793771010894,
       "durationMs": 4593011,
@@ -159,7 +159,7 @@
         }
       ],
       "hadLog": true,
-      "agentSessionFile": "C:\\Users\\ShaliniSingh1\\.claude\\projects\\C--Users-ShaliniSingh1-Desktop-parking-rag-chatbot\\47b8016f-0eaa-4cbd-aeb5-b2eed33df2c5.jsonl",
+      "agentSessionFile": "C:\\Users\\jayakumari1\\.claude\\projects\\C--Users-jayakumari1-Desktop-parking-rag-chatbot\\47b8016f-0eaa-4cbd-aeb5-b2eed33df2c5.jsonl",
       "costSeries": [
         {
           "t": 1793771028845,

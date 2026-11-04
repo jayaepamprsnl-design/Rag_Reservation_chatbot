@@ -74,16 +74,16 @@ def _future_end(h: int = 27, hour: int = 14) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Original bug report — shalini singh sentence
+# Original bug report — jaya kumari sentence
 # ---------------------------------------------------------------------------
 
-class TestShaliniSentence:
+class TestjayaSentence:
     """
-    'my name is shalini singh i want to book a spot for 4th nov 2026
+    'my name is jaya kumari i want to book a spot for 4th nov 2026
     from 2pm till 3hrs'
 
     Expected:
-    • name  = "shalini singh"
+    • name  = "jaya kumari"
     • start = 2026-11-04 14:00
     • end   = 2026-11-04 17:00
     • next question asks only for plate or lot  (NOT name)
@@ -93,12 +93,12 @@ class TestShaliniSentence:
         start(sid)
         r = advance(
             sid,
-            "my name is shalini singh i want to book a spot "
+            "my name is jaya kumari i want to book a spot "
             "for 4th nov 2026 from 2pm till 3hrs",
             db,
         )
         data = _sessions[sid]
-        assert data.name == "shalini singh", f"name not extracted: {data.name!r}"
+        assert data.name == "jaya kumari", f"name not extracted: {data.name!r}"
         # Bot must NOT ask for the name again
         assert "full name" not in r.message.lower(), (
             f"Bot asked for name despite it being given:\n{r.message}"
@@ -108,7 +108,7 @@ class TestShaliniSentence:
         start(sid)
         advance(
             sid,
-            "my name is shalini singh i want to book a spot "
+            "my name is jaya kumari i want to book a spot "
             "for 4th nov 2026 from 2pm till 3hrs",
             db,
         )
@@ -121,7 +121,7 @@ class TestShaliniSentence:
         start(sid)
         advance(
             sid,
-            "my name is shalini singh i want to book a spot "
+            "my name is jaya kumari i want to book a spot "
             "for 4th nov 2026 from 2pm till 3hrs",
             db,
         )
@@ -135,7 +135,7 @@ class TestShaliniSentence:
         start(sid)
         r = advance(
             sid,
-            "my name is shalini singh i want to book a spot "
+            "my name is jaya kumari i want to book a spot "
             "for 4th nov 2026 from 2pm till 3hrs",
             db,
         )

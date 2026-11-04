@@ -23,7 +23,7 @@ LINE_RE = re.compile(r"^[^|\r\n]+ \| [A-Z0-9\-]+ \| \d{4}-\d\d-\d\d \d\d:\d\d - 
 def rec(**over):
     base = dict(
         reservation_id=1,
-        customer_name="Shalini Singh",
+        customer_name="jaya kumari",
         car_plate="TS09AB1234",
         start_time="2026-11-04T14:00:00",
         end_time="2026-11-04T17:00:00",
@@ -49,7 +49,7 @@ class TestLineFormat:
     def test_exact_line_matches_spec_example(self, store):
         store.write(ReservationRecord(**rec()))
         assert lines(store)[1] == (
-            "Shalini Singh | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00"
+            "jaya kumari | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00"
         )
 
     def test_multi_day_period_shows_both_dates(self):
@@ -352,7 +352,7 @@ class TestTools:
         assert not res.get("isError")
         assert json.loads(res["content"][0]["text"]) == {"status": "written", "reservation_id": 1}
         text = (tmp_path / "http" / "confirmed.txt").read_text(encoding="utf-8")
-        assert "Shalini Singh | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00" in text
+        assert "jaya kumari | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00" in text
 
     def test_duplicate_via_mcp(self, client):
         call_tool(client, "write_reservation", rec())

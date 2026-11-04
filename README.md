@@ -1,454 +1,491 @@
-# CityPark RAG Chatbot — Stage 3
+# CityPark RAG Chatbot (Stage-4)
 
-A RAG-powered parking reservation assistant with a **human-in-the-loop approval workflow**
-whose approved reservations are written to a file through an **MCP server**,
-built with FastAPI, LangChain, ChromaDB, SQLite, and Streamlit.
+A parking-reservation assistant built in four stages: a RAG chatbot, a human-in-the-loop administrator agent, an MCP server that records approved reservations, and a LangGraph workflow that orchestrates all of them.
 
----
+## Table of Contents
 
-## Architecture overview
-
-```
-User (browser)
-  |-- POST /chat ─────────────────────> FastAPI  (app/api/routes/chat.py)
-                                           |
-                                    Agent 1: RAG Chatbot
-                                    (app/chat/reservation.py)
-                                           |  user confirms booking
-                                    create_pending_reservation()
-                                           |
-                                    ChannelRegistry
-                                      RestChannel (always)
-                                      EmailChannel (if ADMIN_EMAIL_ENABLED)
-                                           |
-                                    Admin sees pending in:
-                                      GET /admin/reservations/pending
-                                      Admin Panel page in Streamlit UI (:8501/admin)
-                                           |
-                               Admin approves or refuses
-                               POST /admin/reservations/{id}/approve
-                               POST /admin/reservations/{id}/refuse
-                               POST /admin/chat  (natural language)
-                               GET  /admin/approve?token=...  (email link)
-                               GET  /admin/refuse?token=...   (email link)
-                                           |
-                                    Agent 2: AdminAgent (LangChain)
-                                    (app/agents/admin_agent.py)
-                                           |
-                                    User's next message delivers notification
-                                    GET /sessions/{id}/notifications (poll)
-                                           |
-                                    On approval only (Stage 3): MCP server
-                                    appends the reservation to a text file
-                                    (see "Stage 3" below)
-```
+1. [Overview](#overview)
+2. [Architecture](#architecture)
+3. [Components](#components)
+4. [Reservation Lifecycle](#reservation-lifecycle)
+5. [Project Structure](#project-structure)
+6. [Setup](#setup)
+7. [Configuration](#configuration)
+8. [Running the System](#running-the-system)
+9. [API Reference](#api-reference)
+10. [MCP Server](#mcp-server)
+11. [Testing](#testing)
+12. [Evaluation and Load Tests](#evaluation-and-load-tests)
+13. [Docker, CI/CD and Terraform](#docker-cicd-and-terraform)
+14. [Security](#security)
+15. [Example Conversations](#example-conversations)
+16. [Troubleshooting](#troubleshooting)
+17. [Limitations and Future Work](#limitations-and-future-work)
 
 ---
 
-## Quick start (local)
+## Overview
 
-```bash
-# 1. Create and activate virtual environment
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+| Stage | Deliverable |
+|---|---|
+| 1 | RAG chatbot with a vector DB (static data), SQL DB (dynamic data), reservation slot filling, PII guardrails and an evaluation report |
+| 2 | Second LangChain agent that escalates reservation requests to an administrator and returns the approve/refuse decision to the user |
+| 3 | MCP server that writes approved reservations to a text file |
+| 4 | LangGraph orchestration of the full pipeline, integration tests and load tests |
 
-# 2. Install dependencies
-pip install -r requirements.txt
-python -m spacy download en_core_web_lg
+**Key features**
 
-# 3. Configure environment
-cp .env.example .env
-# Edit .env — set ADMIN_API_KEY and (optionally) OPENAI_API_KEY
-
-# 4. Seed DB, apply Stage-2 migration, ingest documents
-python scripts/seed_db.py
-python scripts/migrate_stage2.py
-CHROMA_COLLECTION=parking_static python scripts/ingest.py
-
-# 5. Start the API
-uvicorn app.api.main:app --reload --port 8000
-
-# 6. Start the unified UI (Chat + Admin Panel via sidebar)
-streamlit run app/ui/streamlit_app.py --server.port 8501
-
-```
-
-| Service | URL |
-|---------|-----|
-| API + docs | http://localhost:8000/docs |
-| Chat UI | http://localhost:8501 |
-| Admin Panel | http://localhost:8501/admin (sidebar link; sign in with `ADMIN_API_KEY` from .env) |
+- Answers questions about location, rules, booking process, EV charging and more using retrieval-augmented generation.
+- Answers dynamic questions (availability, prices, working hours) from SQL, never from the LLM's memory.
+- Collects reservation details in natural language. Details given in a single message are parsed at once, and only missing fields are asked for.
+- Detects and masks sensitive data (emails, phones, card numbers, API keys, passwords) in input and output with Presidio and spaCy. It also blocks prompt-injection attempts.
+- Escalates each reservation to a human administrator, who approves or refuses it in the admin panel.
+- Writes approved reservations to a text file through an authenticated MCP server.
+- Runs offline with a MockLLM fallback when no LLM key is configured.
 
 ---
 
-## Docker (all services)
+## Architecture
 
-```bash
-cp .env.example .env   # fill in ADMIN_API_KEY and MCP_API_KEY at minimum
-docker compose up --build
+```mermaid
+flowchart LR
+    U[User] --> UI[Streamlit UI<br/>Chat + Admin pages]
+    UI --> API[FastAPI]
+    API --> G[LangGraph workflow]
+
+    subgraph Graph[LangGraph StateGraph]
+        direction LR
+        C[chat_node<br/>guardrails + router + RAG/SQL + slot filling]
+        E[escalate_node<br/>create PENDING + notify admin]
+        A[admin_approval_node<br/>interrupt - human decision]
+        R[record_node<br/>MCP write]
+        N[notify_user_node]
+        C -->|booking complete| E --> A
+        A -->|approved| R --> N
+        A -->|refused / expired| N
+        C -->|info / small talk| END1((END))
+        N --> END2((END))
+    end
+
+    G --- Graph
+    C --> V[(ChromaDB<br/>static data)]
+    C --> S[(SQLite<br/>dynamic data + reservations)]
+    A --> ADM[Admin agent<br/>LangChain]
+    R --> MCP[MCP server<br/>FastMCP]
+    MCP --> F[/confirmed_reservations.txt/]
+    G --- CP[(SQLite checkpointer)]
 ```
 
-Optional Mailpit SMTP capture for local email testing:
-
-```bash
-ADMIN_EMAIL_ENABLED=true SMTP_HOST=mailpit docker compose --profile mailpit up
-# Mailpit web UI: http://localhost:8025
-```
-
----
-
-## Stage 3 — approved reservations are written to a file via an MCP server
-
-When an administrator **approves** a reservation, the API calls a separate
-[MCP](https://modelcontextprotocol.io) server that appends one line to a text file.
-Pending, refused, cancelled and expired reservations are never written.
+### End-to-end sequence
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    actor U as User
-    participant A1 as Agent 1 (chat bot)
+    participant User
+    participant Chat as Chat node (Agent 1)
     participant DB as SQLite
-    actor Adm as Administrator
-    participant A2 as Admin Agent
+    participant Admin as Admin (UI/API)
+    participant Agent2 as Admin agent (Agent 2)
     participant MCP as MCP server
-    participant F as confirmed_reservations.txt
+    participant File as Text file
 
-    U->>A1: "book a space" ... "confirm"
-    A1->>DB: create reservation (PENDING)
-    A1-->>U: request sent to the administrator
-    Adm->>A2: approve reservation (REST / admin chat / email link)
-    A2->>DB: approve_reservation: CONFIRMED, committed
-    A2->>MCP: write_reservation (Bearer token)
-    alt MCP server reachable
-        MCP->>F: append one line (lock, idempotent per id)
-        MCP-->>A2: status written or duplicate
-        A2->>DB: file_written = true
-    else MCP server down
-        MCP--xA2: connection refused or timeout
-        Note over A2,DB: stays CONFIRMED, file_written = false, retried later
+    User->>Chat: "Book a spot on 4 Nov, 14:00-17:00"
+    Chat->>User: Ask only for the missing fields
+    User->>Chat: Plate, lot, confirm
+    Chat->>DB: Save reservation as PENDING
+    Chat->>Agent2: Escalation request
+    Note over Chat,Agent2: Graph pauses (interrupt), state saved in checkpoint
+    Agent2->>Admin: Confirmation request with details
+    Admin->>Agent2: Approve / Refuse (+ reason)
+    Agent2->>DB: CONFIRMED / REFUSED
+    alt Approved
+        Agent2->>MCP: write_reservation (Bearer token)
+        MCP->>File: Append line (idempotent, locked)
+        MCP-->>Agent2: written / duplicate
     end
-    A2-->>Adm: approve response with file_written note
-    A2-->>U: notification on the next chat message
+    Agent2->>User: Decision delivered in chat
 ```
 
-The file write happens **after** the approval is committed, and only from the code path of a
-successful approval — the LLM cannot trigger it (`write_reservation` is deliberately not in the
-LLM-facing `TOOLS` list, and it re-checks in the database that an admin approved the row).
-If the MCP server is down the reservation stays `CONFIRMED` with `file_written = false`; a
-retry worker (started with the API, every `MCP_RETRY_INTERVAL_SECONDS`) and
-`scripts/retry_pending_writes.py` write it later. The server is idempotent per reservation id
-*and content*: a retry of the same booking answers `duplicate` and writes nothing, so retries
-cannot create duplicate lines. The same id with **different** content (for example a recreated
-database reusing id 1) answers `conflict`, writes nothing and is **not** marked as written — it
-needs a human, and it never silently replaces or drops a booking. A row the server rejects
-permanently is skipped (and logged) by the retry sweep so it cannot block the rows behind it;
-only an outage stops a sweep.
+---
 
-### File format
+## Components
 
-`data/output/confirmed_reservations.txt` (in Docker: `/data/output/...` on the `mcp_output` volume).
-A header is written when the file is created, then one line per approved reservation:
+### 1. RAG chatbot (Agent 1)
+
+- **Static data** (general info, location, rules, booking process, payments, security, EV charging, accessibility, FAQ, cancellation policy) lives in `data/static/*.md`. It is chunked, embedded and stored in ChromaDB.
+- **Dynamic data** (availability, prices, working hours, reservations) lives in SQLite and is accessed through SQLAlchemy.
+- **Intent router** classifies each message as static info, dynamic info, reservation, small talk or out of scope, using an LLM classifier with a keyword/regex fallback.
+- **Dynamic answers** fetch rows from SQL and pass them to the LLM as context. The LLM never invents numbers.
+- **Slot extractor** parses name, plate, lot, date, start/end time and duration from free text (for example "4th nov 2026 from 2pm for 3hrs").
+- **Guardrails** run on input and output (PII masking, prompt-injection check, leakage blocking). Only the masked text reaches logs and LLM prompts.
+
+### 2. Administrator agent (Agent 2)
+
+- Built with LangChain, with tools to list pending reservations, read details, check availability, send notifications and record decisions.
+- Generates a concise confirmation request for the administrator. All facts and numbers come from tool results.
+- Accepts natural-language admin commands such as `approve 12`, `refuse 12 because the lot is closed`, or `show pending`.
+- **The LLM can never approve on its own.** Only an explicit admin decision changes a reservation's status.
+- Channels: REST (default, via the admin API and panel) and optional email with signed, single-use, expiring approve/refuse links.
+
+### 3. MCP server
+
+- Built with the official Python `mcp` SDK (FastMCP, streamable HTTP).
+- Tool `write_reservation` appends one line per approved reservation. Tool `list_confirmed_reservations` is read-only.
+- Protected by bearer token auth, input validation, injection filtering, rate limiting and file locking. See [MCP Server](#mcp-server).
+
+### 4. LangGraph orchestration
+
+- One `StateGraph` connects the chat, escalation, approval, recording and notification nodes. Existing modules are reused as node functions.
+- Human approval uses `interrupt()`. The workflow is resumed with the admin's decision.
+- A SQLite checkpointer (`thread_id = session_id`) keeps state across restarts.
+- If the MCP server is down, the reservation stays `CONFIRMED` with `file_written = false`, and a retry worker writes it later.
+
+---
+
+## Reservation Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: user confirms summary
+    PENDING --> CONFIRMED: admin approves
+    PENDING --> REFUSED: admin refuses (or no space at approval)
+    PENDING --> CANCELLED: user cancels
+    PENDING --> EXPIRED: no admin response in time
+    CONFIRMED --> [*]: written to file via MCP
+    REFUSED --> [*]
+    CANCELLED --> [*]
+    EXPIRED --> [*]
+```
+
+- A `PENDING` reservation does not reduce available spaces. Spaces are decremented only on approval.
+- On approval, conflicts and availability are re-checked. If there is no space, the reservation is auto-refused with a reason.
+- Only `PENDING` reservations can be approved or refused, so a double click cannot double-book.
+- Only `CONFIRMED` reservations are ever written to the file.
+
+---
+
+## Project Structure
+
+```
+parking-rag-chatbot/
+├── app/
+│   ├── api/
+│   │   ├── main.py                 # FastAPI app, middleware, startup
+│   │   └── routes/                 # chat, reservations, admin, graph
+│   ├── agents/                     # admin agent, contracts, message bus, channels, MCP client
+│   ├── chat/                       # conversation manager, intent router, slot extractor, reservation flow
+│   ├── core/                       # config, logging
+│   ├── db/                         # models, session, repository
+│   ├── guardrails/                 # PII filter, injection check, output filter
+│   ├── mcp_server/                 # FastMCP server
+│   ├── orchestration/              # LangGraph state, nodes, graph
+│   ├── rag/                        # embedder, chroma store, ingestor, retriever, generator
+│   └── ui/                         # Streamlit app (Chat + Admin pages)
+├── data/
+│   ├── static/                     # knowledge base (markdown)
+│   ├── eval/                       # evaluation datasets
+│   └── output/                     # confirmed_reservations.txt (git-ignored)
+├── docs/                           # evaluation and load-test reports, charts, presentations
+├── infra/                          # Terraform
+├── load/                           # load test scripts
+├── scripts/                        # ingest, seed, eval, MCP runner, retry worker
+├── tests/                          # unit and integration tests
+├── docker-compose.yml
+├── Dockerfile
+├── pytest.ini
+├── requirements.txt
+└── .env.example
+```
+
+> Folder names reflect the intended layout. If your tree differs slightly, adjust this section.
+
+---
+
+## Setup
+
+**Requirements:** Python 3.11, Git. Docker is optional.
+
+```powershell
+git clone <your-repo-url>
+cd parking-rag-chatbot
+
+python -m venv venv
+venv\Scripts\activate            # Linux/macOS: source venv/bin/activate
+
+pip install -r requirements.txt
+python -m spacy download en_core_web_lg
+
+copy .env.example .env           # Linux/macOS: cp .env.example .env
+```
+
+Edit `.env` (see [Configuration](#configuration)). Generate strong secrets with:
+
+```
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+Prepare the data:
+
+```
+python scripts/seed_db.py
+python scripts/ingest.py
+```
+
+Use `python scripts/ingest.py --reset` to rebuild the vector store from scratch.
+
+If you already have an older `parking.db` from before Stage 2, delete it and re-run `seed_db.py` (the schema has new tables and columns).
+
+---
+
+## Configuration
+
+All settings come from `.env`. Never commit it. Only `.env.example` (placeholders) belongs in the repo.
+
+| Variable | Purpose | Example / default |
+|---|---|---|
+| `DIAL_API_KEY` | EPAM DIAL key. Leave empty to run offline with MockLLM | `your-dial-api-key` |
+| `DIAL_ENDPOINT` | DIAL endpoint | `https://ai-proxy.lab.epam.com` |
+| `DIAL_API_VERSION` | DIAL API version | `2025-04-01-preview` |
+| `DIAL_CHAT_MODEL` | Chat model deployment name | `your-chat-model` |
+| `DIAL_EMBEDDING_MODEL` | Embedding deployment name | `text-embedding-3-small-1` |
+| `OPENAI_API_BASE`, `OPENAI_API_KEY`, `OPENAI_MODEL` | Optional OpenAI-compatible alternative | commented out |
+| `LLM_TEMPERATURE` | Sampling temperature | `0.1` |
+| `LLM_TIMEOUT` | LLM request timeout (s) | `30.0` |
+| `LLM_MAX_RETRIES` | LLM retries with backoff | `3` |
+| `EMBEDDING_MODEL` | Local sentence-transformers model | `all-MiniLM-L6-v2` |
+| `CHROMA_PERSIST_DIR` | Vector store folder | `./chroma_db` |
+| `CHROMA_COLLECTION` | Chroma collection name | `parking_static` |
+| `DATABASE_URL` | SQLAlchemy URL | `sqlite:///./parking.db` |
+| `RETRIEVAL_TOP_K` | Chunks retrieved per query | `5` |
+| `APP_HOST`, `APP_PORT` | API bind address | `127.0.0.1`, `8000` |
+| `LOG_LEVEL` | Logging level | `INFO` |
+| `API_BASE_URL` / `ADMIN_API_BASE_URL` | API URL used by the UI | `http://localhost:8000` |
+| `ADMIN_API_KEY` | Key for `X-Admin-Key` header | generate a strong value |
+| `ADMIN_EMAIL_ENABLED` | Enable the email channel | `false` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` | SMTP settings | `localhost`, `1025` |
+| `ADMIN_EMAIL`, `EMAIL_FROM` | Email addresses | placeholders |
+| `EMAIL_TOKEN_SECRET` | Signs approve/refuse links | generate a strong value |
+| `EMAIL_TOKEN_MAX_AGE_SECONDS` | Link lifetime | `86400` |
+| `MCP_HOST`, `MCP_PORT` | MCP server bind address | `127.0.0.1`, `8765` |
+| `MCP_API_KEY` | Bearer token (min. 16 chars), same for server and client | generate a strong value |
+| `RESERVATIONS_FILE` | Output file path (server-side only) | `data/output/confirmed_reservations.txt` |
+| `MCP_RATE_LIMIT_PER_MINUTE` | Server rate limit | `120` |
+| `MCP_EXPORT_ENABLED` | Write to the file after approval | `true` |
+| `MCP_SERVER_URL` | MCP endpoint used by the client | `http://127.0.0.1:8765/mcp` |
+| `MCP_CLIENT_TIMEOUT` | Client timeout (s) | `5.0` |
+| `MCP_CLIENT_MAX_ATTEMPTS` | Client retries | `3` |
+| `MCP_CLIENT_BACKOFF_SECONDS` | Backoff base | `0.5` |
+| `MCP_RETRY_INTERVAL_SECONDS` | Retry worker interval | `60` |
+| `GRAPH_CHECKPOINT_DB` | LangGraph checkpoint database | `./data/checkpoints.sqlite` |
+| `APPROVAL_EXPIRY_HOURS` | Hours before a pending request expires | `24` |
+
+> The last two variables are Stage 4 additions. Confirm the names match `app/core/config.py`.
+
+---
+
+## Running the System
+
+Start three processes, each in its own terminal (with the venv activated):
+
+```
+# 1. MCP server
+python scripts/run_mcp_server.py
+
+# 2. API
+uvicorn app.api.main:app --reload
+
+# 3. UI (chat + admin panel)
+streamlit run app/ui/streamlit_app.py
+```
+
+| Service | URL |
+|---|---|
+| Streamlit UI | http://localhost:8501 |
+| API docs (Swagger) | http://localhost:8000/docs |
+| API health | http://localhost:8000/health |
+| MCP server | http://127.0.0.1:8765/mcp |
+
+**Using the UI**
+
+1. Open the **Chat** page and book a spot. The request goes to `PENDING`.
+2. Use the sidebar to switch to the **Admin Panel**, enter the `ADMIN_API_KEY` and approve or refuse the request.
+3. Return to **Chat**. The decision appears as a message.
+4. Check `data/output/confirmed_reservations.txt` for the new line.
+
+**Retry failed writes manually** (if the MCP server was down during an approval):
+
+```
+python scripts/retry_pending_writes.py
+```
+
+---
+
+## API Reference
+
+Admin endpoints require the header `X-Admin-Key: <ADMIN_API_KEY>`.
+
+### Public
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/health` | Health check |
+| GET | `/lots` | Parking lots with live availability |
+| POST | `/chat` | Send a message: `{session_id, message}` returns `{answer, sources, intent, guardrail_flags}` |
+| POST | `/reset-session` | Clear a chat session |
+| GET | `/reservations/{id}/status` | Reservation status, reason, decision time |
+| GET | `/sessions/{session_id}/notifications` | Undelivered admin decisions for a session |
+
+### Admin (protected)
+
+| Method | Path | Description |
+|---|---|---|
+| GET | `/admin/verify` | Validate the API key |
+| GET | `/admin/reservations/pending` | Pending reservations |
+| GET | `/admin/reservations/history` | Decided reservations (optional status filter) |
+| GET | `/admin/reservations/{id}` | Reservation details |
+| POST | `/admin/reservations/{id}/approve` | Approve `{note?}`. Returns `file_written` flag |
+| POST | `/admin/reservations/{id}/refuse` | Refuse `{reason}` |
+| POST | `/admin/chat` | Natural-language commands to the admin agent |
+| GET | `/admin/approve?token=...` | Email-link approval (signed, single use) |
+| GET | `/admin/refuse?token=...` | Email-link refusal (signed, single use) |
+| GET | `/graph/{session_id}/state` | Workflow state for debugging |
+
+### curl examples
+
+```bash
+# Chat
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"demo1","message":"What are your opening hours?"}'
+
+# List pending reservations
+curl http://localhost:8000/admin/reservations/pending \
+  -H "X-Admin-Key: $ADMIN_API_KEY"
+
+# Approve
+curl -X POST http://localhost:8000/admin/reservations/1/approve \
+  -H "X-Admin-Key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"note":"OK"}'
+
+# Refuse
+curl -X POST http://localhost:8000/admin/reservations/2/refuse \
+  -H "X-Admin-Key: $ADMIN_API_KEY" -H "Content-Type: application/json" \
+  -d '{"reason":"Lot closed for maintenance"}'
+```
+
+On Windows PowerShell, use `$env:ADMIN_API_KEY` and `curl.exe`, or call the Swagger UI at `/docs`.
+
+---
+
+## MCP Server
+
+**Tools**
+
+| Tool | Description |
+|---|---|
+| `write_reservation(reservation_id, customer_name, car_plate, start_time, end_time, approved_at)` | Appends one line. Returns `written` or `duplicate` |
+| `list_confirmed_reservations(limit)` | Read-only listing |
+
+**Output file format** (`Name | Car Number | Reservation Period | Approval Time`):
 
 ```
 Name | Car Number | Reservation Period | Approval Time
 Shalini Singh | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00
 ```
 
-A reservation spanning midnight shows both dates (`2026-11-04 22:00 - 2026-11-05 06:00`).
-Next to the file, `<file>.ids` records `<id> <sha256 of the line>` for every written reservation
-(this is what makes writes idempotent) and `<file>.lock` is the cross-process lock. Do not edit
-them by hand. The `.ids` file belongs to the output file: if you delete, empty or rotate the
-output file, the next write starts a fresh file (with header) and discards the old ids.
-Customer names are normalised before sending (`|` becomes `/`, control characters removed,
-leading `= + - @` stripped), so an approved booking is always recorded.
+**Reliability**
 
-### Start the MCP server
-
-```bash
-# 1. Generate a key and put it in .env as MCP_API_KEY=<key>  (the API and the server share it)
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-
-# 2. Start the server (reads MCP_HOST / MCP_PORT / MCP_API_KEY / RESERVATIONS_FILE from .env)
-python scripts/run_mcp_server.py        # listens on http://127.0.0.1:8765, MCP endpoint /mcp
-
-# 3. Start the API as usual; with MCP_API_KEY set, approvals now write to the file
-uvicorn app.api.main:app --port 8000
-```
-
-The server refuses to start without `MCP_API_KEY`. If `MCP_API_KEY` is empty on the API side the
-export is simply off: approvals still work and report `file_written: false`.
-
-**Docker:** `docker compose up --build` starts an `mcp-server` service that is *not* published to
-the host. It sits on an `internal: true` network that only the `api` container also joins, and
-writes to the named volume `mcp_output`. `MCP_API_KEY` is mandatory in `.env` — compose stops with a
-clear error if it is missing.
-
-```bash
-# Use sh -c so the path is resolved inside the container (Git Bash on Windows would otherwise
-# rewrite /data/... into a Windows path)
-docker compose exec mcp-server sh -c 'cat /data/output/confirmed_reservations.txt'
-docker compose exec api python scripts/retry_pending_writes.py     # flush the queue by hand
-```
-
-The container runs with a read-only root filesystem, all Linux capabilities dropped and
-`no-new-privileges`; only the `mcp_output` volume and `/tmp` are writable. It logs a
-`non_loopback_bind` warning at start-up because it listens on `0.0.0.0` *inside* the container —
-expected there, since the network is internal and nothing is published.
-
-### Try it
-
-Approve a reservation and read the admin-side note in the response (`file_written`, `file_note`):
-
-```bash
-curl -s -X POST http://localhost:8000/admin/reservations/1/approve \
-  -H "X-Admin-Key: $ADMIN_API_KEY" -H "Content-Type: application/json" -d '{}'
-# {"reservation_id":1,"status":"confirmed",...,"file_written":true,"file_note":"Reservation recorded in the confirmed-reservations file."}
-```
-
-A complete, self-contained run (starts the MCP server and API on spare ports with a **copy** of
-`parking.db`, books through `/chat`, approves, stops the MCP server, approves again, restarts it and
-shows the retry worker catching up): `python scripts/demo_stage3_e2e.py`
-
-Talk to the MCP server directly. `Accept` must list both content types; every call except
-`/health` needs the bearer token.
-
-```bash
-export MCP_API_KEY=...        # the same key the server runs with
-MCP="http://127.0.0.1:8765"
-
-curl -s $MCP/health                                                   # {"status":"ok"}
-curl -s -o /dev/null -w "%{http_code}\n" -X POST $MCP/mcp \
-  -H "Content-Type: application/json" -d '{}'                         # 401 (no token)
-
-curl -s -X POST $MCP/mcp -H "Authorization: Bearer $MCP_API_KEY" \
-  -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
-
-curl -s -X POST $MCP/mcp -H "Authorization: Bearer $MCP_API_KEY" \
-  -H "Content-Type: application/json" -H "Accept: application/json, text/event-stream" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write_reservation","arguments":{"reservation_id":1,"customer_name":"Shalini Singh","car_plate":"TS09AB1234","start_time":"2026-11-04T14:00:00","end_time":"2026-11-04T17:00:00","approved_at":"2026-11-03T11:30:00"}}}'
-# -> {"status": "written", ...}; send it again -> "duplicate"; a name containing "|" -> isError true
-```
-
-PowerShell:
-
-```powershell
-$h = @{ Authorization = "Bearer $env:MCP_API_KEY"; Accept = "application/json, text/event-stream" }
-$body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"list_confirmed_reservations","arguments":{"limit":5}}}'
-(Invoke-RestMethod -Uri http://127.0.0.1:8765/mcp -Method Post -Headers $h -ContentType "application/json" -Body $body).result.content[0].text
-```
-
-Inside Docker the server is not reachable from the host (that is the point), so run the curl
-inside the container. Wrap it in `sh -c '...'` so `$MCP_API_KEY` is expanded by the container's
-shell, not yours:
-
-```bash
-docker compose exec -T mcp-server sh -c 'curl -s -X POST http://localhost:8765/mcp \
-  -H "Authorization: Bearer $MCP_API_KEY" -H "Content-Type: application/json" \
-  -H "Accept: application/json, text/event-stream" \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}"'
-```
-
-### Security measures
-
-- **Authentication:** bearer token (`MCP_API_KEY`) on every route except the exact path `/health`, compared in constant time (`hmac.compare_digest`); wrong or missing token → `401` for every method and path variant (`/health/`, `//mcp`, `/MCP`, encoded paths…). WebSocket and other non-HTTP connections are closed, never forwarded. The server will not start without a key or with one shorter than 16 characters; there is no default key in code, compose or Terraform.
-- **Network:** binds to `127.0.0.1` by default. In Docker it is on an internal-only network with no published port.
-- **No client-chosen paths:** the output file comes only from `RESERVATIONS_FILE`; the tools take no path argument.
-- **Input validation (Pydantic):** id range, name 1–100 chars, plate regex, ISO-8601 dates, end after start. `|`, CR/LF, NUL, tabs, ANSI escapes and Unicode line separators are **rejected**, so a client cannot forge columns or extra lines; names starting with `= + - @` are rejected too (spreadsheet formula injection). Oversized request bodies are refused (`413`).
-- **Rate limit:** `MCP_RATE_LIMIT_PER_MINUTE` per client address, applied *before* authentication so token guessing is throttled (`429`).
-- **No PII in logs:** only reservation ids and error class names are logged — never names, plates or file paths. Error messages name the field and rule, never the submitted value.
-- **Reliability:** thread lock + OS file lock (`msvcrt` / `fcntl`, verified with four concurrent processes), `fsync`ed UTF-8 appends, a line truncated by a crash is terminated before the next append, idempotent per reservation id and content.
-- **No secret in the audit trail:** the admin identity stored in `decided_by` is `api:` + a hash of `ADMIN_API_KEY`, no longer its first 8 characters.
-- **Approval gate in three places:** the client, the writer and the `write_reservation` tool each refuse anything that is not an admin-approved `CONFIRMED` reservation.
-
-### Limitations
-
-- The MCP server trusts any holder of `MCP_API_KEY`: it cannot check approvals itself (it has no database access), so protect the key like the admin key. The key is visible to anyone who can run `docker inspect` on the containers and is stored in the Terraform state — keep both private. There is a single shared key: no per-client identity and no rotation without restarting both sides.
-- The file is an **append-only log**. Cancelling an approved reservation later does not remove its line.
-- Customer names and plates are stored **in clear text** in the file; protect the volume/host accordingly. The server speaks plain HTTP: keep it on loopback or the internal network, or put a TLS proxy in front of it.
-- Idempotency uses the `.ids` sidecar file. A crash between writing the line and the id could allow *one* duplicate line on retry (a reservation is never lost).
-- One writer host: the lock is local to the machine, so do not point several servers at a file on a network share.
-- Rate limiting is in-memory, per process and per client address, so a noisy client on the same address can throttle a legitimate one.
-- With the server down, the approving admin waits for the inline attempts (about 4–5 s on Windows, where a refused connection shows up as a timeout) before seeing `file_written: false`.
-- The first start after upgrading writes **all earlier admin-approved reservations** that have `file_written = false`. Stage-1 reservations that were confirmed without an admin decision are never written.
-- The retry worker runs inside each API process. Several API replicas sweep concurrently — safe because of idempotency, but redundant.
+- Idempotent: the same reservation ID is never written twice.
+- Atomic appends with a file lock, so concurrent writes do not interleave.
+- If the server is unreachable, the approval stays committed, the reservation is flagged `file_written = false`, and the retry worker writes it later.
 
 ---
 
-## Environment variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_API_KEY` | `your-api-key-here` | LLM API key — leave as-is for offline/mock mode |
-| `OPENAI_API_BASE` | OpenAI | Compatible with EPAM AI DIAL and other endpoints |
-| `OPENAI_MODEL` | `gpt-4o-mini` | LLM model identifier |
-| `DATABASE_URL` | SQLite local | SQLAlchemy connection string |
-| `CHROMA_PERSIST_DIR` | `./chroma_db` | ChromaDB storage path |
-| `CHROMA_COLLECTION` | `parking_static` | Collection name |
-| `RETRIEVAL_TOP_K` | `5` | Number of chunks retrieved per query |
-| **`ADMIN_API_KEY`** | **(required)** | Key for all `/admin/*` endpoints — **change before deploying** |
-| `ADMIN_API_BASE_URL` | `http://localhost:8000` | Base URL embedded in email action links |
-| `ADMIN_EMAIL_ENABLED` | `false` | Enable SMTP email notifications to admin |
-| `SMTP_HOST` | `localhost` | SMTP server hostname (`mailpit` for local dev) |
-| `SMTP_PORT` | `1025` | SMTP port |
-| `SMTP_USER` | *(empty)* | SMTP username — **sensitive** |
-| `SMTP_PASSWORD` | *(empty)* | SMTP password — **sensitive** |
-| `ADMIN_EMAIL` | `admin@citypark.example.com` | Admin notification recipient |
-| `EMAIL_FROM` | `no-reply@citypark.example.com` | Email sender address |
-| `EMAIL_TOKEN_SECRET` | *(change-me)* | HMAC secret for signed email links — **change before deploying** |
-| `EMAIL_TOKEN_MAX_AGE_SECONDS` | `86400` | Email link expiry (24 h) |
-| **`MCP_API_KEY`** | **(required for Stage 3)** | Bearer token (min. 16 chars) shared by the API and the MCP server — **sensitive**; empty = export off |
-| `MCP_HOST` / `MCP_PORT` | `127.0.0.1` / `8765` | Where the MCP server listens |
-| `RESERVATIONS_FILE` | `data/output/confirmed_reservations.txt` | Output file (server side only) |
-| `MCP_RATE_LIMIT_PER_MINUTE` | `120` | MCP server per-client rate limit |
-| `MCP_SERVER_URL` | `http://127.0.0.1:8765/mcp` | MCP endpoint the API calls |
-| `MCP_EXPORT_ENABLED` | `true` | Master switch for the export |
-| `MCP_CLIENT_TIMEOUT` / `MCP_CLIENT_MAX_ATTEMPTS` / `MCP_CLIENT_BACKOFF_SECONDS` | `5.0` / `3` / `0.5` | Client timeout, attempts, exponential backoff base |
-| `MCP_RETRY_INTERVAL_SECONDS` | `60` | Background retry-worker interval |
-
----
-
-## API endpoints
-
-### Chat (public)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/chat` | Send a message; drives the reservation state machine |
-| `GET` | `/health` | Liveness probe |
-| `GET` | `/lots` | Live parking-lot availability |
-| `POST` | `/reset-session` | Clear in-memory session state |
-
-### Reservations (public)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/reservations/{id}/status` | Approval-workflow status of a LotReservation |
-| `GET` | `/sessions/{session_id}/notifications` | Poll and mark delivered pending decisions |
-
-### Admin (requires `X-Admin-Key` header)
-
-| Method | Path | 
-Description |
-|--------|------|-------------|
-| `GET` | `/admin/reservations/pending` | List all PENDING reservations |
-| `GET` | `/admin/reservations/history` | List decided reservations |
-| `GET` | `/admin/reservations/{id}` | Single reservation detail |
-| `POST` | `/admin/reservations/{id}/approve` | Approve with optional note |
-| `POST` | `/admin/reservations/{id}/refuse` | Refuse with required reason |
-| `POST` | `/admin/chat` | Natural-language commands to the admin agent |
-
-### Email-link (token-authenticated, no API key)
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/admin/approve?token=...` | One-click approve from email |
-| `GET` | `/admin/refuse?token=...` | One-click refuse from email |
-
----
-
-## Project structure
+## Testing
 
 ```
-app/
-  agents/
-    admin_agent.py      Agent 2 — LangChain tool-calling admin agent (+ write_reservation tool)
-    mcp_client.py       Async MCP client: bearer auth, timeout, retry with backoff
-    reservation_writer.py  Post-approval export + retry sweep (marks file_written)
-    bus.py              Message bus (InProcessBus / interface for queue swap)
-    contracts.py        Pydantic contracts between agents
-    channels/
-      base.py           Channel ABC + ChannelResult
-      rest_channel.py   Primary: persists to DB (always enabled)
-      email_channel.py  Optional: SMTP with signed single-use links
-      registry.py       Fan-out to all enabled channels
-      tokens.py         sign / verify / consume (itsdangerous)
-  api/
-    main.py             FastAPI app entry point
-    routes/
-      admin.py          Admin API (protected by X-Admin-Key)
-      chat.py           Main chat route
-      reservations.py   Reservation status + notifications
-  chat/
-    reservation.py      State machine: IDLE -> ... -> AWAITING_APPROVAL -> DONE
-    router.py           Intent routing (RAG / dynamic / reservation)
-    conversation.py     Conversation context
-    guardrails/         PII masking + injection detection
-  db/
-    models.py           SQLAlchemy models (LotReservation, ApprovalRequest, ...)
-    repository.py       Repository layer (approval workflow functions)
-    session.py          Database session management
-  mcp_server/
-    server.py           MCP server (FastMCP, streamable-http): write_reservation, list_confirmed_reservations, /health
-  rag/
-    generator.py        LLM client (OpenAI / MockLLM)
-    retriever.py        ChromaDB retrieval
-    ingestor.py         Static document ingestion
-  ui/
-    streamlit_app.py    User chat UI with notification polling
-    admin_app.py        Admin dashboard (login, pending, history, agent chat)
-  core/
-    config.py           pydantic-settings (reads .env)
-docker/
-  entrypoint.sh         Container startup script
-  init.py               DB seed + Stage-2 migration + ChromaDB ingest
-infra/
-  main.tf               Terraform Docker provider (api, ui, admin-ui, mcp-server on an internal network)
-  variables.tf          All configurable variables (secrets marked sensitive, incl. mcp_api_key)
-  outputs.tf            Service URLs
-scripts/
-  seed_db.py            Seed parking lots
-  migrate_stage2.py     Idempotent Stage-2 schema migration
-  ingest.py             Ingest static docs into ChromaDB
-  run_eval.py           Stage-1 RAG evaluation suite
-  run_eval_stage2.py    Stage-2 approval-workflow evaluation suite
-  run_mcp_server.py     Start the Stage-3 MCP server
-  retry_pending_writes.py  Write approved reservations whose file write is still pending
-  demo_stage3_e2e.py    End-to-end demo: book -> approve -> file (incl. outage + retry)
-```
+# All tests
+python -m pytest -v
 
----
-
-## Tech stack
-
-| Component | Library |
-|-----------|---------|
-| API framework | FastAPI 0.111 |
-| Async server | uvicorn |
-| LLM | openai (OpenAI / DIAL / MockLLM) |
-| Agent orchestration | LangChain Core 0.3 (`@tool`, InjectedToolArg) |
-| Vector DB | ChromaDB 0.5 |
-| Embeddings | sentence-transformers (all-MiniLM-L6-v2) |
-| ORM | SQLAlchemy 2 + SQLite |
-| Settings | pydantic-settings |
-| PII / guardrails | Presidio 2.2 + spaCy en_core_web_lg |
-| Email tokens | itsdangerous 2.2 |
-| User UI | Streamlit 1.36 |
-| MCP | mcp 1.9 (FastMCP, streamable-http) |
-| Tests | pytest 8 + httpx + coverage |
-| IaC | Terraform (kreuzwerker/docker provider) |
-| Local SMTP | Mailpit (optional Docker profile) |
-
----
-
-## Running the test suite
-
-```bash
+# With coverage
 python -m pytest --cov=app --cov-report=term-missing
+
+# HTML coverage report (open htmlcov/index.html)
+python -m pytest --cov=app --cov-report=html
 ```
 
-CI fails below 85% coverage. Current coverage: **93%** (834 tests, 0 failures; the three Stage-3 modules are at 100%).
-Stage-3 tests start a real MCP server in a thread, so they need no Docker.
+Tests use a mocked LLM, temporary SQLite and Chroma directories, and no network calls. Test groups: configuration, DB and repository, RAG pipeline, router and slot extraction, reservation flow, guardrails, API, admin agent, channels, MCP server and client, LangGraph workflow, and end-to-end integration (`tests/integration/`).
 
 ---
 
-## Security notes
+## Evaluation and Load Tests
 
-- `ADMIN_API_KEY` is validated with `hmac.compare_digest` (constant-time — timing-attack resistant).
-- Email action tokens are HMAC-signed (itsdangerous), time-limited (24 h default), and single-use (ApprovalRequest row tracks consumption).
-- Plates are masked in all admin-facing outputs (e.g. `ABC****34`).
-- PII in user messages is masked before reaching logs or the LLM.
-- The LLM cannot approve or refuse autonomously — a deterministic keyword gate in `parse_decision` runs before any LLM call.
-- `SMTP_PASSWORD` and `EMAIL_TOKEN_SECRET` are never included in log messages.
-- `MCP_API_KEY` is required, never defaulted, and never logged; see **Stage 3 → Security measures**.
+**RAG evaluation** (Recall@K, Precision@K, MRR, hit rate, latency, guardrail precision/recall):
+
+```
+python scripts/run_eval.py
+```
+
+Output: `docs/evaluation_report.md`, `docs/results.json`, `docs/charts/`.
+
+**Load tests** (chatbot dialogue, admin approvals, MCP recording):
+
+```
+python load/load_test.py
+```
+
+Output: `docs/load_test_report.md`. The tests also verify that the output file has no lost or duplicated lines and that there are no double bookings.
+
+> Add your measured results here after running the scripts (average and p95 latency, throughput, error rate).
+
+---
+
+## Docker, CI/CD and Terraform
+
+```
+docker compose up --build
+docker compose down
+```
+
+Services: `api`, `ui`, `mcp-server` (internal network only), with volumes for SQLite, Chroma, the checkpoint DB and `data/output`. Optional `mailpit` profile for local email testing.
+
+- **CI** (`.github/workflows/ci.yml` or `.gitlab-ci.yml`): ruff lint, pytest with `--cov-fail-under=85`, Docker build.
+- **Terraform** (`infra/`): container deployment with sensitive variables for all secrets.
+
+---
+
+## Security
+
+- **Secrets** are read from `.env` only. `.env`, databases, checkpoint files and `data/output/*.txt` are git-ignored.
+- **Admin API** requires `X-Admin-Key` (constant-time comparison). Email links use signed, expiring, single-use tokens.
+- **MCP server** requires a bearer token, binds to `127.0.0.1` by default, ignores any client-supplied file path, validates every field, rejects `|`, CR/LF and control characters to prevent line injection, and applies a rate limit.
+- **PII protection:** names, plates, emails, phones, cards, keys and passwords are masked in logs and LLM prompts. Raw values are never logged.
+- **LLM boundaries:** the LLM cannot approve reservations or trigger file writes. Only an explicit admin decision does.
+- **Prompt injection:** attempts such as "ignore previous instructions" get a safe refusal.
+
+---
+
+## Example Conversations
+
+**Booking with all details in one message**
+
+```
+User: Hi
+Bot:  Hello! I'm the CityPark assistant. How can I help?
+User: My name is Shalini Singh, I want to book a spot for 4th Nov 2026 from 2pm for 3 hours
+Bot:  Thanks Shalini! I have 4 Nov 2026, 14:00-17:00. Which lot, and what is your car plate number?
+User: Central lot, TS09AB1234
+Bot:  Summary: ... Please confirm (yes/no).
+User: yes
+Bot:  Your request #12 has been sent to the administrator. I'll let you know the decision.
+...
+Bot:  Good news! Reservation #12 is confirmed for 4 Nov 2026, 14:00-17:00.
+```
+
+**Refusal**
+
+```
+Bot:  Reservation #13 was not approved: "Lot closed for maintenance".
+      Would you like to try another time or lot?
+```
+
+---

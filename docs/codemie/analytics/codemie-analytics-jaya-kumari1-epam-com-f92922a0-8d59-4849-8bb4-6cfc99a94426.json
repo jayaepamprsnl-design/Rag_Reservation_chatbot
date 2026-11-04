@@ -29,7 +29,7 @@
         "withLog": 1
       }
     ],
-    "userEmail": "shalini_singh1@epam.com",
+    "userEmail": "jaya_kumari1@epam.com",
     "periodStart": "2026-11-03T10:43:17.458Z",
     "periodEnd": "2026-11-03T12:08:01.323Z"
   },
@@ -39,7 +39,7 @@
       "agentName": "claude",
       "provider": "ai-run-sso",
       "title": "Project: parking-rag-chatbot. Stages 1-2 are done. Stage 3: process APPROVED reservations via an MCP server that writes them to a text file. Do not break existing tests. Do not modify app/guardrails/pii_filter.py, app/chat/intent_router.py or app/core/logging_config.py. Windows environment. No hardcoded secrets. Inspect app/agents/admin_agent.py, app/db/repository.py (approve_reservation), app/db/models.py, app/core/config.py, requirements.txt and docker-compose.yml. Then propose briefly: new files, how the approval hook calls the MCP server, the DB changes, and a Mermaid diagram. Wait for my \"go\"",
-      "project": "C:\\Users\\ShaliniSingh1\\Desktop\\parking-rag-chatbot",
+      "project": "C:\\Users\\jayakumari1\\Desktop\\parking-rag-chatbot",
       "branch": "stage_1",
       "startTime": 1793702597458,
       "durationMs": 5083865,
@@ -160,7 +160,7 @@
         }
       ],
       "hadLog": true,
-      "agentSessionFile": "C:\\Users\\ShaliniSingh1\\.claude\\projects\\C--Users-ShaliniSingh1-Desktop-parking-rag-chatbot\\367bb355-cd47-4b80-957e-0ef3922082d6.jsonl",
+      "agentSessionFile": "C:\\Users\\jayakumari1\\.claude\\projects\\C--Users-jayakumari1-Desktop-parking-rag-chatbot\\367bb355-cd47-4b80-957e-0ef3922082d6.jsonl",
       "costSeries": [
         {
           "t": 1793702608112,

@@ -211,7 +211,7 @@ def approve_http(client, rid):
 
 class TestApproveWritesLine:
     def test_rest_approve_writes_exact_line_and_flags_db(self, client, db, Session, server):
-        rid = pending(db, name="Shalini Singh", plate="TS09AB1234")
+        rid = pending(db, name="jaya kumari", plate="TS09AB1234")
         r = approve_http(client, rid)
         assert r.status_code == 200
         body = r.json()
@@ -219,7 +219,7 @@ class TestApproveWritesLine:
         assert "recorded" in body["file_note"]
         line = server.data_lines()[0]
         parts = line.split(" | ")
-        assert parts[0] == "Shalini Singh" and parts[1] == "TS09AB1234"
+        assert parts[0] == "jaya kumari" and parts[1] == "TS09AB1234"
         assert parts[2].count(" - ") == 1 and len(parts) == 4
         saved = row(Session, rid)
         assert saved.file_written is True and saved.file_written_at is not None

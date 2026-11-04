@@ -250,7 +250,7 @@ File format (`data/output/confirmed_reservations.txt`):
 
 ```
 Name | Car Number | Reservation Period | Approval Time
-Shalini Singh | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00
+jaya kumari | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00
 ```
 
 **Write path**: validate (Pydantic; `|`, control characters and leading `= + - @` are rejected) ->

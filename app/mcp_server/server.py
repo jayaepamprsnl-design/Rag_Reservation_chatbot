@@ -12,7 +12,7 @@ list_confirmed_reservations(limit) read-only, newest last
 File line format
 ----------------
     Name | Car Number | Reservation Period | Approval Time
-    Shalini Singh | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00
+    jaya kumari | TS09AB1234 | 2026-11-04 14:00 - 17:00 | 2026-11-03 11:30:00
 
 Security
 --------

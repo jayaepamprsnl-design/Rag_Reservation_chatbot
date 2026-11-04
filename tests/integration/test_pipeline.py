@@ -47,7 +47,7 @@ def test_info_then_booking_then_approval_writes_exactly_one_correct_line(pipe):
     info = pipe.chat(sid, "How much does parking cost?")
     assert info["intent"] == "DYNAMIC_INFO" and info["reservation_id"] is None
 
-    rid = pipe.book(sid, name="Shalini Singh", plate="TS09AB1234")
+    rid = pipe.book(sid, name="jaya kumari", plate="TS09AB1234")
     assert pipe.lines() == []                                   # PENDING: nothing in the file
 
     body = pipe.approve(rid).json()
@@ -55,7 +55,7 @@ def test_info_then_booking_then_approval_writes_exactly_one_correct_line(pipe):
     lines = pipe.lines()
     assert len(lines) == 1
     name, plate, period, approved_at = [p.strip() for p in lines[0].split("|")]
-    assert (name, plate) == ("Shalini Singh", "TS09AB1234")
+    assert (name, plate) == ("jaya kumari", "TS09AB1234")
     assert period.count(":") == 2 and " - " in period          # "YYYY-MM-DD HH:MM - HH:MM"
     assert len(approved_at) == 19                               # "YYYY-MM-DD HH:MM:SS"
     assert pipe.row(rid).file_written is True

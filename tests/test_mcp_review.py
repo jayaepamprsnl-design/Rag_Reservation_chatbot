@@ -168,7 +168,7 @@ class TestInjection:
     @pytest.mark.parametrize(
         "raw, expected",
         [
-            ("Shalini Singh", "Shalini Singh"),
+            ("jaya kumari", "jaya kumari"),
             ("Eve | Mallory", "Eve / Mallory"),
             ("=HYPERLINK(1)", "HYPERLINK(1)"),
             ("a\r\nb\x00c", "a bc"),
