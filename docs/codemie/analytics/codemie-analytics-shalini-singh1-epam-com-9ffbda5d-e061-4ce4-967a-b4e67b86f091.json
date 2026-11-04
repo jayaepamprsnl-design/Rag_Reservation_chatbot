@@ -1,0 +1,263 @@
+{
+  "meta": {
+    "generatedAt": "2026-11-03T06:48:49.696Z",
+    "rangeLabel": "all",
+    "agents": [
+      "claude"
+    ],
+    "projectFilter": "all",
+    "totals": {
+      "sessions": 1,
+      "durationMs": 5757187,
+      "turns": 8,
+      "files": 4,
+      "netLines": -1,
+      "toolCallsTotal": 12,
+      "toolSuccessRate": 100,
+      "totalCostUSD": 0.18353769999999997,
+      "cacheReadCostUSD": 0.0367077,
+      "pricedSessions": 1
+    },
+    "unpricedModels": [],
+    "estimatedModels": [],
+    "localModels": [],
+    "coverage": [
+      {
+        "agentName": "claude",
+        "total": 1,
+        "priced": 1,
+        "withLog": 1
+      }
+    ],
+    "userEmail": "shalini_singh1@epam.com",
+    "periodStart": "2026-11-03T05:12:47.885Z",
+    "periodEnd": "2026-11-03T06:48:45.072Z"
+  },
+  "sessions": [
+    {
+      "sessionId": "9ffbda5d-e061-4ce4-967a-b4e67b86f091",
+      "agentName": "claude",
+      "provider": "ai-run-sso",
+      "title": "refer the repo and i would like to combine my admin panel and main app in one there must be a option to navigate to the admin panel and provide the admin api key to access the portal do the necessary changes and utilize minimal token for this",
+      "project": "C:\\Users\\ShaliniSingh1\\Desktop\\parking-rag-chatbot",
+      "branch": "stage_1",
+      "startTime": 1793682767885,
+      "durationMs": 5757187,
+      "turns": 8,
+      "fileOps": 4,
+      "linesAdded": 2,
+      "linesRemoved": 3,
+      "linesModified": 0,
+      "netLines": -1,
+      "filesChanged": 1,
+      "filesWritten": 0,
+      "filesEdited": 1,
+      "toolCallsTotal": 12,
+      "toolCallsSuccess": 12,
+      "toolCallsFailure": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ],
+      "languages": [
+        "python"
+      ],
+      "tools": [
+        {
+          "toolName": "Read",
+          "totalCalls": 4,
+          "successCount": 4,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Bash",
+          "totalCalls": 4,
+          "successCount": 4,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Grep",
+          "totalCalls": 2,
+          "successCount": 2,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Glob",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        },
+        {
+          "toolName": "Edit",
+          "totalCalls": 1,
+          "successCount": 1,
+          "failureCount": 0,
+          "successRate": 100
+        }
+      ],
+      "tokens": {
+        "input": 18,
+        "output": 3613,
+        "cacheRead": 367077,
+        "cacheCreation": 27666,
+        "cacheCreation1h": 27666,
+        "total": 398374
+      },
+      "costUSD": 0.18353769999999997,
+      "cacheReadCostUSD": 0.0367077,
+      "perModelCost": [
+        {
+          "model": "claude-sonnet-5-5",
+          "tokens": {
+            "input": 4,
+            "output": 433,
+            "cacheRead": 64912,
+            "cacheCreation": 10256,
+            "cacheCreation1h": 10256,
+            "total": 75605
+          },
+          "costUSD": 0.0518532,
+          "unpriced": false
+        },
+        {
+          "model": "claude-sonnet-5-5",
+          "tokens": {
+            "input": 14,
+            "output": 3180,
+            "cacheRead": 302165,
+            "cacheCreation": 17410,
+            "cacheCreation1h": 17410,
+            "total": 322769
+          },
+          "costUSD": 0.13168449999999998,
+          "unpriced": false
+        }
+      ],
+      "hadLog": true,
+      "agentSessionFile": "C:\\Users\\ShaliniSingh1\\.claude\\projects\\C--Users-ShaliniSingh1-Desktop-parking-rag-chatbot\\10168c66-188a-4563-b7d0-f99580bd431a.jsonl",
+      "costSeries": [
+        {
+          "t": 1793687424837,
+          "cost": 0.0401599,
+          "tokens": 37085
+        },
+        {
+          "t": 1793687426998,
+          "cost": 0.0518532,
+          "tokens": 75605
+        },
+        {
+          "t": 1793687430042,
+          "cost": 0.09468270000000001,
+          "tokens": 123099
+        },
+        {
+          "t": 1793687438713,
+          "cost": 0.1244857,
+          "tokens": 175775
+        },
+        {
+          "t": 1793687441439,
+          "cost": 0.13877130000000001,
+          "tokens": 229880
+        },
+        {
+          "t": 1793687447627,
+          "cost": 0.15563500000000002,
+          "tokens": 285304
+        },
+        {
+          "t": 1793687455047,
+          "cost": 0.17066100000000003,
+          "tokens": 341473
+        },
+        {
+          "t": 1793687512590,
+          "cost": 0.18353770000000003,
+          "tokens": 398374
+        }
+      ],
+      "costSource": "native-estimate",
+      "costBasis": "standard-api-tokens",
+      "dispatchesComplete": true,
+      "rootOwnCostUSD": 0.18353769999999997,
+      "unlinkedCostUSD": 0,
+      "unlinkedAgentIds": [],
+      "observedEnd": 1793688525072,
+      "rootOwnTokens": {
+        "input": 18,
+        "output": 3613,
+        "cacheRead": 367077,
+        "cacheCreation": 27666,
+        "cacheCreation1h": 27666,
+        "total": 398374
+      },
+      "unlinkedTokens": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheCreation": 0,
+        "cacheCreation1h": 0,
+        "total": 0
+      },
+      "modelTimeline": [
+        {
+          "t": 1793687424837,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0401599,
+          "tokens": 37085
+        },
+        {
+          "t": 1793687426998,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0116933,
+          "tokens": 38520
+        },
+        {
+          "t": 1793687430042,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0428295,
+          "tokens": 47494
+        },
+        {
+          "t": 1793687438713,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.029803,
+          "tokens": 52676
+        },
+        {
+          "t": 1793687441439,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0142856,
+          "tokens": 54105
+        },
+        {
+          "t": 1793687447627,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0168637,
+          "tokens": 55424
+        },
+        {
+          "t": 1793687455047,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.015026,
+          "tokens": 56169
+        },
+        {
+          "t": 1793687512590,
+          "model": "claude-sonnet-5-5",
+          "costUSD": 0.0128767,
+          "tokens": 56901
+        }
+      ],
+      "routedTurnsPct": 0,
+      "skillInvocations": [],
+      "agentInvocations": [],
+      "commandInvocations": [],
+      "sessionSource": "Pure chat"
+    }
+  ]
+}

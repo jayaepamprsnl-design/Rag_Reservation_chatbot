@@ -1,0 +1,2 @@
+# Tooling for load/load_test.py only (not needed by the app)
+matplotlib==3.9.2
