@@ -22,7 +22,7 @@ User (browser)
                                            |
                                     Admin sees pending in:
                                       GET /admin/reservations/pending
-                                      Admin Streamlit dashboard (:8502)
+                                      Admin Panel page in Streamlit UI (:8501/admin)
                                            |
                                Admin approves or refuses
                                POST /admin/reservations/{id}/approve
@@ -63,18 +63,16 @@ CHROMA_COLLECTION=parking_static python scripts/ingest.py
 # 5. Start the API
 uvicorn app.api.main:app --reload --port 8000
 
-# 6. Start the user UI (separate terminal)
+# 6. Start the unified UI (Chat + Admin Panel via sidebar)
 streamlit run app/ui/streamlit_app.py --server.port 8501
 
-# 7. Start the admin dashboard (separate terminal)
-streamlit run app/ui/admin_app.py --server.port 8505
 ```
 
 | Service | URL |
 |---------|-----|
 | API + docs | http://localhost:8000/docs |
-| User chat UI | http://localhost:8501 |
-| Admin dashboard | http://localhost:8502 (key from `ADMIN_API_KEY` in .env) |
+| Chat UI | http://localhost:8501 |
+| Admin Panel | http://localhost:8501/admin (sidebar link; sign in with `ADMIN_API_KEY` from .env) |
 
 ---
 

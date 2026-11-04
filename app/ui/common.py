@@ -59,9 +59,8 @@ def init_chat_state() -> None:
 
 def init_admin_state() -> None:
     """Ensure all admin-page session keys exist."""
-    # Pre-fill from env so docker-compose / local dev just works.
-    if "admin_key" not in st.session_state:
-        st.session_state.admin_key = os.getenv("ADMIN_API_KEY", "")
+    # Never pre-fill from env: the key must be entered at the login gate.
+    st.session_state.setdefault("admin_key", "")
     st.session_state.setdefault("admin_chat_history", [])
 
 # ---------------------------------------------------------------------------

@@ -29,8 +29,8 @@ def _today(h: int = 25, minute: int = 0) -> datetime:
 class TestNameExtraction:
 
     def test_my_name_is(self):
-        s = extract_slots("my name is shalini singh i want to book a spot")
-        assert s.customer_name == "shalini singh"
+        s = extract_slots("my name is jaya kumari i want to book a spot")
+        assert s.customer_name == "jaya kumari"
 
     def test_my_name_is_first_only(self):
         s = extract_slots("my name is Alice")
@@ -53,9 +53,9 @@ class TestNameExtraction:
         assert s.customer_name is None
 
     def test_name_stops_at_i_want(self):
-        s = extract_slots("my name is shalini singh i want to park")
+        s = extract_slots("my name is jaya kumari i want to park")
         # Must not include "i want to park"
-        assert s.customer_name == "shalini singh"
+        assert s.customer_name == "jaya kumari"
 
     def test_date_word_not_captured_as_name(self):
         s = extract_slots("book for 4th nov 2026 from 2pm")
@@ -130,15 +130,15 @@ class TestStartEndExtraction:
         """Fixed reference: 2026-11-02 12:00 so tests are deterministic."""
         return datetime(2026, 11, 2, 12, 0)
 
-    def test_shalini_full_sentence(self):
+    def test_jaya_full_sentence(self):
         """The original bug report sentence."""
         today = datetime(2026, 11, 2, 12, 0)
         s = extract_slots(
-            "my name is shalini singh i want to book a spot "
+            "my name is jaya kumari i want to book a spot "
             "for 4th nov 2026 from 2pm till 3hrs",
             today=today,
         )
-        assert s.customer_name == "shalini singh"
+        assert s.customer_name == "jaya kumari"
         assert s.start_time is not None
         assert s.start_time.date() == datetime(2026, 11, 4).date()
         assert s.start_time.hour == 14

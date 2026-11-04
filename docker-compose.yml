@@ -53,7 +53,7 @@ services:
     env_file: .env
     environment:
       API_URL: http://api:8000
-      # ADMIN_API_KEY from env_file pre-fills the admin login form.
+      # ADMIN_API_KEY is entered manually at the Admin Panel login.
       ADMIN_API_KEY: ${ADMIN_API_KEY:-change-me-before-production}
     ports:
       - "8501:8501"

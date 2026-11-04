@@ -8,6 +8,13 @@ Two pages accessible from the sidebar:
 Run locally:
     streamlit run app/ui/streamlit_app.py
 """
+import sys
+from pathlib import Path
+
+# Ensure the project root is on sys.path so `app.*` imports resolve
+# regardless of the working directory Streamlit uses when executing the file.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
 import streamlit as st
 
 # st.set_page_config must be the very first Streamlit call.
@@ -29,8 +36,8 @@ init_admin_state()
 from app.ui.pages.admin_page import render as _admin_render  # noqa: E402
 from app.ui.pages.chat_page import render as _chat_render    # noqa: E402
 
-chat_page  = st.Page(_chat_render,  title="Chat",         icon="💬", default=True)
-admin_page = st.Page(_admin_render, title="Admin Panel",  icon="🔑")
+chat_page  = st.Page(_chat_render,  title="Chat",        icon="💬", url_path="chat",  default=True)
+admin_page = st.Page(_admin_render, title="Admin Panel", icon="🔑", url_path="admin")
 
 pg = st.navigation([chat_page, admin_page])
 pg.run()
