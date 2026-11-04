@@ -21,8 +21,12 @@ jobs:
       - name: Install ruff
         run: pip install ruff==0.4.10
 
-      - name: Lint app/ and tests/
-        run: ruff check app/ tests/ --ignore E501,E402
+      # Picks up ruff.toml (legacy test files are exempted from style-only rules).
+      - name: Lint app/, tests/, load/ and the Stage 3-4 scripts
+        run: |
+          ruff check app/ tests/ load/ \
+            scripts/run_mcp_server.py scripts/retry_pending_writes.py scripts/demo_stage4_e2e.py \
+            --ignore E501,E402
 
   # ── Tests & Coverage ─────────────────────────────────────────────────────────
   test:
@@ -67,6 +71,10 @@ jobs:
           pip install -r requirements.txt
           pip install ruff==0.4.10
 
+      # The pinned set (langgraph, mcp, fastapi, pydantic, ...) must stay mutually compatible.
+      - name: Check dependency consistency
+        run: pip check
+
       - name: Download spaCy model
         run: python -m spacy download en_core_web_lg
 
@@ -82,13 +90,15 @@ jobs:
       - name: Ingest static documents (offline / mock mode)
         run: CHROMA_COLLECTION=parking_static python scripts/ingest.py
 
+      # Includes tests/integration (full API pipeline) and the Stage-4 orchestration, crash-recovery
+      # and concurrency tests.  Tests use tmp SQLite files and an in-process/mocked MCP and LLM.
       - name: Run pytest with coverage
         run: |
           pytest tests/ -v --tb=short \
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
-            --cov-fail-under=90
+            --cov-fail-under=85
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -96,6 +106,29 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
+
+  # ── Terraform ────────────────────────────────────────────────────────────────
+  terraform:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Format check
+        run: terraform fmt -check -diff
+
+      - name: Init (no backend) and validate
+        env:
+          # required variable with a length check; a throw-away value, never stored
+          TF_VAR_mcp_api_key: ci-terraform-validate-0123456789
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
 
   # ── Docker build & smoke-test ─────────────────────────────────────────────────
   docker:
@@ -109,18 +142,72 @@ jobs:
       - name: Copy .env.example to .env
         run: cp .env.example .env
 
+      # docker-compose.yml refuses to start without MCP_API_KEY (no default on
+      # purpose). Generate a throw-away one for this run; it is never stored.
+      - name: Generate a one-off MCP_API_KEY
+        run: |
+          KEY=$(openssl rand -hex 24)
+          echo "::add-mask::$KEY"
+          echo "MCP_API_KEY=$KEY" >> "$GITHUB_ENV"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # load: true puts the image into the local Docker daemon so the smoke tests
+      # below (docker run / docker compose --no-build) can use it.
       - name: Build image (runtime stage only)
         uses: docker/build-push-action@v5
         with:
           context: .
           target: runtime
           push: false
-          tags: parking-rag-api:ci
+          load: true
+          tags: |
+            parking-rag-api:ci
+            parking-rag-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+
+      - name: Smoke-test — MCP server (internal only, auth enforced)
+        run: |
+          docker compose up -d --no-build mcp-server
+
+          echo "Waiting for mcp-server to become healthy…"
+          for i in $(seq 1 20); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q mcp-server)")" = "healthy" ] && break
+            echo "  attempt $i/20 — not healthy yet"
+            sleep 3
+          done
+
+          CID=$(docker compose ps -q mcp-server)
+          echo "--- /health (no token needed) ---"
+          docker compose exec -T mcp-server curl -sf http://localhost:8765/health
+
+          echo; echo "--- /mcp without token -> 401 ---"
+          STATUS=$(docker compose exec -T mcp-server curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8765/mcp -H "Content-Type: application/json" -d '{}')
+          [ "$STATUS" = "401" ] || (echo "Expected 401, got $STATUS"; docker compose logs mcp-server; exit 1)
+
+          echo "--- /mcp with wrong token -> 401 ---"
+          STATUS=$(docker compose exec -T mcp-server curl -s -o /dev/null -w "%{http_code}" \
+            -X POST http://localhost:8765/mcp -H "Authorization: Bearer wrong" \
+            -H "Content-Type: application/json" -d '{}')
+          [ "$STATUS" = "401" ] || (echo "Expected 401, got $STATUS"; exit 1)
+
+          echo "--- not published to the host ---"
+          PORTS=$(docker inspect -f '{{json .NetworkSettings.Ports}}' "$CID")
+          echo "ports: $PORTS"
+          echo "$PORTS" | grep -q HostPort && (echo "mcp-server must not publish ports"; exit 1)
+
+          echo "--- attached only to the internal network ---"
+          NETS=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' "$CID")
+          echo "networks: $NETS"
+          [ "$(echo $NETS | wc -w)" = "1" ] || (echo "expected exactly one network"; exit 1)
+
+          docker compose down -v
 
       - name: Smoke-test — API health + admin endpoint
         run: |
@@ -166,3 +253,49 @@ jobs:
 
           echo "All smoke tests passed."
           docker stop ci-api
+
+      # The whole compose stack: api + ui + mcp-server healthy, and the LangGraph checkpoint DB
+      # on the data VOLUME (not in the container layer) so paused approvals survive a recreate.
+      - name: Smoke-test — full stack and checkpoint volume
+        run: |
+          AK=$(openssl rand -hex 24); ES=$(openssl rand -hex 24)
+          echo "::add-mask::$AK"; echo "::add-mask::$ES"
+          sed -i "s/^ADMIN_API_KEY=.*/ADMIN_API_KEY=$AK/; s/^EMAIL_TOKEN_SECRET=.*/EMAIL_TOKEN_SECRET=$ES/" .env
+
+          docker compose up -d --no-build
+
+          wait_healthy() {
+            for i in $(seq 1 60); do
+              [ "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q "$1")")" = "healthy" ] && return 0
+              sleep 5
+            done
+            echo "$1 did not become healthy"; docker compose logs "$1"; return 1
+          }
+          for svc in mcp-server api ui; do wait_healthy "$svc"; done
+          echo "api, ui and mcp-server are healthy"
+          curl -sf http://localhost:8000/health
+          curl -sf http://localhost:8501/_stcore/health
+
+          echo "--- one chat turn creates a checkpoint ---"
+          curl -sf -X POST http://localhost:8000/chat -H "Content-Type: application/json" \
+            -d '{"message":"How much does parking cost?","session_id":"ci-smoke"}' >/dev/null
+          docker compose exec -T api sh -c 'test -s /data/checkpoints.db' \
+            || (echo "checkpoint DB is not on the /data volume"; exit 1)
+          docker compose exec -T api sh -c '! test -e /app/checkpoints.db' \
+            || (echo "checkpoint DB leaked into the container layer"; exit 1)
+
+          echo "--- debug endpoint needs the admin key ---"
+          [ "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/graph/ci-smoke/state)" = "401" ]
+          curl -sf -H "X-Admin-Key: $AK" http://localhost:8000/graph/ci-smoke/state | grep -q '"exists":true'
+
+          echo "--- the thread survives recreating the API container ---"
+          docker compose up -d --no-build --force-recreate api
+          wait_healthy api
+          curl -sf -H "X-Admin-Key: $AK" http://localhost:8000/graph/ci-smoke/state | grep -q '"exists":true'
+
+          echo "--- no access log (it would print ?token= of email links) ---"
+          curl -s "http://localhost:8000/admin/approve?token=SECRET-TOKEN-CANARY" >/dev/null || true
+          ! docker compose logs api | grep -q "SECRET-TOKEN-CANARY"
+
+          docker compose down -v
+

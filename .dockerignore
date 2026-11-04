@@ -21,6 +21,7 @@ build/
 htmlcov/
 
 # Local data (mounted as volumes in compose)
+data/output/
 chroma_db/
 parking.db
 *.db

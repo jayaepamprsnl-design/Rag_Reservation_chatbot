@@ -32,9 +32,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl \
 
 # Copy the pre-built virtual environment from the builder stage.
 COPY --from=builder /venv /venv
+# CHECKPOINT_DB lives on the /data volume so paused approvals survive a container recreate.
 ENV PATH="/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    CHECKPOINT_DB=/data/checkpoints.db
 
 WORKDIR /app
 
@@ -50,4 +52,6 @@ RUN chmod +x /app/docker/entrypoint.sh
 EXPOSE 8000 8501
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
-CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-access-log: uvicorn's access line prints the full URL, including the single-use
+# ?token= of the email approve/refuse links.  The app logs method/path/status itself.
+CMD ["uvicorn", "app.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
