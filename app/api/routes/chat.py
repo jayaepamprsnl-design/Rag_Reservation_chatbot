@@ -13,8 +13,6 @@ from app.chat.reservation import (
     _COLLECTING_STATES,
     advance as reservation_advance,
     get_state as reservation_get_state,
-    prefill_name as reservation_prefill_name,
-    start as reservation_start,
 )
 from app.chat.router import RouterIntent, handle as router_handle
 from app.core.logging_config import logger

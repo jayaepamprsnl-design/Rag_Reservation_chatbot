@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.db.models import ApprovalRequest, LotReservation, ParkingLot, ReservationStatus
+from app.db.models import LotReservation, ParkingLot, ReservationStatus
 
 _PLATE_RE = re.compile(r"^[A-Z0-9][A-Z0-9\-]{1,8}[A-Z0-9]$", re.IGNORECASE)
 

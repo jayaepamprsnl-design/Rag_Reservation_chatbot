@@ -58,3 +58,13 @@ desktop.ini
 # Distribution
 *.tar.gz
 *.zip
+
+# MCP output
+data/output/
+
+# Terraform (state and tfvars can contain MCP_API_KEY and other secrets)
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars
+infra/.terraform.lock.hcl

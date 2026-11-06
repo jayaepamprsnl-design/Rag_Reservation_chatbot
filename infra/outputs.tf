@@ -22,3 +22,13 @@ output "data_volume" {
   description = "Named Docker volume holding SQLite DB + ChromaDB."
   value       = docker_volume.parking_data.name
 }
+
+output "mcp_internal_url" {
+  description = "MCP endpoint as seen from the API container (internal network only; not reachable from the host)."
+  value       = "http://mcp-server:${var.mcp_port}/mcp"
+}
+
+output "mcp_output_volume" {
+  description = "Named Docker volume holding confirmed_reservations.txt."
+  value       = docker_volume.mcp_output.name
+}

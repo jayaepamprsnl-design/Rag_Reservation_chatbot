@@ -1,5 +1,5 @@
 ###############################################################################
-# CityPark RAG Chatbot — Stage 2 container deployment (Docker provider)
+# CityPark RAG Chatbot — Stage 3 container deployment (Docker provider)
 #
 # Describes a LOCAL Docker deployment equivalent to docker-compose.yml.
 # Adapt to remote platforms (AWS ECS, GCP Cloud Run, Azure ACI) by swapping
@@ -46,10 +46,63 @@ resource "docker_network" "parking_net" {
   name = "${var.project_name}_network"
 }
 
-# ── Persistent data volume ────────────────────────────────────────────────────
+# ── Internal-only network for the MCP server (Stage 3) ───────────────────────
+# internal = true: no route to the host or the internet. Only the API and the
+# MCP server are attached, and the MCP server publishes no ports.
+
+resource "docker_network" "mcp_net" {
+  name     = "${var.project_name}_mcp_network"
+  internal = true
+}
+
+# ── Persistent data volumes ───────────────────────────────────────────────────
 
 resource "docker_volume" "parking_data" {
   name = "${var.project_name}_data"
+}
+
+# data/output of the MCP server (confirmed_reservations.txt + .ids/.lock files)
+resource "docker_volume" "mcp_output" {
+  name = "${var.project_name}_mcp_output"
+}
+
+# ── MCP reservations server (Stage 3) ─────────────────────────────────────────
+# Appends admin-approved reservations to a text file. No `ports` block on
+# purpose: it is reachable only from the API over the internal network.
+
+resource "docker_container" "mcp_server" {
+  name    = "${var.project_name}_mcp_server"
+  image   = docker_image.parking_rag.image_id
+  restart = "unless-stopped"
+
+  entrypoint = ["python", "scripts/run_mcp_server.py"]
+
+  networks_advanced {
+    name    = docker_network.mcp_net.name
+    aliases = ["mcp-server"]
+  }
+
+  volumes {
+    volume_name    = docker_volume.mcp_output.name
+    container_path = "/data/output"
+  }
+
+  env = [
+    "MCP_API_KEY=${var.mcp_api_key}",
+    "MCP_HOST=0.0.0.0", # inside the container only; the network is internal
+    "MCP_PORT=${var.mcp_port}",
+    "MCP_RATE_LIMIT_PER_MINUTE=${var.mcp_rate_limit_per_minute}",
+    "RESERVATIONS_FILE=/data/output/confirmed_reservations.txt",
+    "ANONYMIZED_TELEMETRY=false",
+  ]
+
+  healthcheck {
+    test         = ["CMD", "curl", "-f", "http://localhost:${var.mcp_port}/health"]
+    interval     = "15s"
+    timeout      = "5s"
+    retries      = 5
+    start_period = "20s"
+  }
 }
 
 # ── API container ─────────────────────────────────────────────────────────────
@@ -67,6 +120,12 @@ resource "docker_container" "api" {
 
   networks_advanced {
     name    = docker_network.parking_net.name
+    aliases = ["api"]
+  }
+
+  # Stage 3: second network so the API can reach the MCP server.
+  networks_advanced {
+    name    = docker_network.mcp_net.name
     aliases = ["api"]
   }
 
@@ -101,7 +160,13 @@ resource "docker_container" "api" {
     "EMAIL_FROM=${var.email_from}",
     "EMAIL_TOKEN_SECRET=${var.email_token_secret}",
     "EMAIL_TOKEN_MAX_AGE_SECONDS=${var.email_token_max_age_seconds}",
+    # Stage 3 — MCP reservations export (same key as the MCP server)
+    "MCP_SERVER_URL=http://mcp-server:${var.mcp_port}/mcp",
+    "MCP_API_KEY=${var.mcp_api_key}",
   ]
+
+  # No hard dependency on the MCP server: approvals must keep working during an
+  # MCP outage (the retry worker catches up afterwards).
 
   healthcheck {
     test         = ["CMD", "curl", "-f", "http://localhost:8000/health"]

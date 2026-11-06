@@ -10,6 +10,7 @@ GET  /reservations      → list reservations (from routes/reservations.py)
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -20,6 +21,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.agents.mcp_client import export_configured, warn_if_insecure_url
+from app.agents.reservation_writer import retry_pending_writes
 from app.api.routes.admin import router as admin_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.reservations import router as reservations_router
@@ -29,12 +32,22 @@ from app.chat.reservation import reset as reset_reservation
 from app.core.config import settings
 from app.core.logging_config import logger
 from app.db.models import ParkingLot
-from app.db.session import create_tables, get_db
+from app.db.session import SessionLocal, create_tables, get_db
 
 
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+
+
+async def _retry_worker() -> None:
+    """Periodically write CONFIRMED reservations whose MCP write failed earlier."""
+    while True:
+        try:
+            await asyncio.to_thread(retry_pending_writes, SessionLocal)
+        except Exception as exc:  # noqa: BLE001 - the worker must survive any sweep
+            logger.error("retry_worker|sweep_failed error=%s", type(exc).__name__)
+        await asyncio.sleep(settings.mcp_retry_interval_seconds)
 
 
 @asynccontextmanager
@@ -43,7 +56,19 @@ async def lifespan(app: FastAPI):
         "CityPark RAG Chatbot starting — %s:%s", settings.app_host, settings.app_port
     )
     create_tables()
+    worker = None
+    if export_configured():
+        warn_if_insecure_url()
+        worker = asyncio.create_task(_retry_worker())
+        logger.info(
+            "retry_worker|started interval=%ds", settings.mcp_retry_interval_seconds
+        )
+    else:
+        logger.warning("retry_worker|disabled (MCP_API_KEY not set or export off)")
     yield
+    if worker:
+        worker.cancel()
+        await asyncio.gather(worker, return_exceptions=True)
     logger.info("CityPark RAG Chatbot shutting down")
 
 

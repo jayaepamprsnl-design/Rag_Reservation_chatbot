@@ -37,7 +37,10 @@ from app.agents.contracts import (
     MessageType,
     ReservationRequest,
 )
+from app.agents.mcp_client import is_admin_approved
+from app.agents.reservation_writer import export_approved, export_note
 from app.core.logging_config import logger
+from app.db.models import LotReservation
 from app.db.repository import (
     ValidationError,
     approve_reservation,
@@ -292,6 +295,46 @@ def send_admin_notification(
 
 
 @tool
+def write_reservation(
+    reservation_id: int,
+    db: Annotated[Session, InjectedToolArg],
+) -> dict:
+    """
+    Append an admin-APPROVED reservation to the confirmed-reservations file
+    through the MCP server.
+
+    Deliberately NOT in TOOLS (the LLM-facing list): it is invoked only by the
+    code path of a successful admin approval (record_admin_decision, the REST
+    approve route, the email-link route and the retry worker).  As defence in
+    depth it re-verifies against the database that an admin approved the
+    reservation, so even a direct call for a PENDING / REFUSED / CANCELLED /
+    EXPIRED reservation is blocked and nothing is sent.
+    """
+    res = db.get(LotReservation, reservation_id)
+    if res is None:
+        return {"error": f"Reservation {reservation_id} not found."}
+    if not is_admin_approved(res):
+        logger.warning(
+            "admin_agent|write_blocked reservation_id=%d status=%s",
+            reservation_id,
+            getattr(res.status, "value", res.status),
+        )
+        return {
+            "error": (
+                f"Blocked: reservation {reservation_id} has not been approved by an "
+                "administrator; nothing was written."
+            ),
+            "file_written": False,
+        }
+    written = export_approved(db, reservation_id)
+    return {
+        "reservation_id": reservation_id,
+        "file_written":   written,
+        "note":           export_note(written),
+    }
+
+
+@tool
 def record_admin_decision(
     reservation_id: int,
     decision: str,
@@ -309,11 +352,16 @@ def record_admin_decision(
     try:
         if dec == "APPROVE":
             res = approve_reservation(db, reservation_id, admin=admin_id, note=reason)
+            # Approval is committed. Only now (and only because it succeeded) try the
+            # file write; failure leaves the reservation CONFIRMED with file_written=False.
+            export = write_reservation.invoke({"reservation_id": res.id, "db": db})
             return {
                 "status":         "approved",
                 "reservation_id": res.id,
                 "decided_by":     admin_id,
                 "decided_at":     res.decided_at.isoformat() if res.decided_at else None,
+                "file_written":   bool(export.get("file_written")),
+                "file_note":      export.get("note") or export.get("error"),
             }
         if dec == "REFUSE":
             res = refuse_reservation(db, reservation_id, admin=admin_id, reason=reason)
@@ -337,6 +385,10 @@ TOOLS = [
     send_admin_notification,
     record_admin_decision,
 ]
+
+# Tools that code (never the LLM) invokes after a verified admin action.
+# Kept out of TOOLS so they can never be bound to a model.
+EXPORT_TOOLS = [write_reservation]
 
 
 # ---------------------------------------------------------------------------
@@ -570,6 +622,9 @@ class AdminAgent:
                 "decision":          decision.decision.value,
                 "reason":            decision.reason,
                 "notification_text": notification_text,
+                # Admin-side only: Agent 1 must not relay this to the customer.
+                "file_written":      result.get("file_written"),
+                "file_note":         result.get("file_note"),
             },
             correlation_id=decision.reservation_id,
         )

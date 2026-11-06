@@ -52,6 +52,16 @@ class Settings(BaseSettings):
     email_token_secret: str = "change-me-in-production"
     email_token_max_age_seconds: int = 86400          # 24 h
 
+    # MCP reservations server (Stage 3). The export is active only when
+    # MCP_API_KEY is set (same shared secret as the server) and the flag is on.
+    mcp_export_enabled: bool = True
+    mcp_server_url: str = "http://127.0.0.1:8765/mcp"
+    mcp_api_key: str = ""
+    mcp_client_timeout: float = 5.0                   # seconds per attempt
+    mcp_client_max_attempts: int = 3                  # background/retry worker
+    mcp_client_backoff_seconds: float = 0.5           # doubles each retry
+    mcp_retry_interval_seconds: int = 60              # API background worker
+
 
 @lru_cache
 def get_settings() -> Settings:

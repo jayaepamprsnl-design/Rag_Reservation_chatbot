@@ -14,7 +14,6 @@ from app.ui.common import (
     api_get,
     auto_refresh,
     init_chat_state,
-    status_badge,
 )
 
 # Lazy import so the UI doesn't crash when the backend package is unavailable.

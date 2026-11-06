@@ -9,7 +9,7 @@ All channel implementations must:
 from __future__ import annotations
 
 import abc
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 from sqlalchemy.orm import Session

@@ -60,6 +60,9 @@ class LotReservation(Base):
     decided_by = Column(String(100), nullable=True)
     # server_default="0" ensures ALTER TABLE ADD COLUMN works on existing SQLite DBs
     notified_user = Column(Boolean, default=False, nullable=False, server_default="0")
+    # Stage 3: has the approved reservation been appended to the MCP-managed file?
+    file_written = Column(Boolean, default=False, nullable=False, server_default="0")
+    file_written_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     lot = relationship("ParkingLot", back_populates="lot_reservations")

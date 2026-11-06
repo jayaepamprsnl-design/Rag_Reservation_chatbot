@@ -1,5 +1,5 @@
 ###############################################################################
-# Input variables — Stage 1 + Stage 2
+# Input variables — Stage 1 + Stage 2 + Stage 3
 ###############################################################################
 
 variable "project_name" {
@@ -145,4 +145,29 @@ variable "email_token_max_age_seconds" {
   description = "Expiry window (seconds) for email action tokens."
   type        = number
   default     = 86400
+}
+
+# ── Stage 3 — MCP reservations server ─────────────────────────────────────────
+
+variable "mcp_api_key" {
+  description = "Bearer token shared by the API and the MCP server. NOTE: it is written to the Terraform state and visible via docker inspect, so keep the state private. REQUIRED, no default: supply via TF_VAR_mcp_api_key or a git-ignored *.tfvars file (generate: python -c \"import secrets; print(secrets.token_urlsafe(32))\")."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.mcp_api_key) >= 24
+    error_message = "mcp_api_key must be at least 24 characters (use a random token)."
+  }
+}
+
+variable "mcp_port" {
+  description = "Port the MCP server listens on inside the internal network (never published to the host)."
+  type        = number
+  default     = 8765
+}
+
+variable "mcp_rate_limit_per_minute" {
+  description = "Per-client request limit on the MCP server (requests per minute)."
+  type        = number
+  default     = 120
 }

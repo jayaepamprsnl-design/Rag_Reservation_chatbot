@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional
@@ -40,7 +40,6 @@ from app.db.repository import (
     ValidationError,
     check_conflicts,
     create_pending_reservation,
-    create_reservation,
     get_availability,
     get_lot,
     get_reservations_by_session,
@@ -187,7 +186,6 @@ def _build_summary(data: _SessionData) -> str:
 def _lot_menu(lots: list[ParkingLot]) -> str:
     lines = ["Which facility would you like?", ""]
     for lot in lots:
-        avail_pct = lot.available_spaces / max(lot.total_spaces, 1) * 100
         status = "available" if lot.available_spaces > 0 else "FULL"
         lines.append(
             f"  {lot.id}.  {lot.name:<22}  ${lot.hourly_price:.2f}/hr  "
@@ -228,7 +226,7 @@ def _validate_plate(text: str) -> tuple[str, str]:
 def _resolve_lot(text: str, lots: list[ParkingLot]) -> Optional[ParkingLot]:
     t = text.strip().lower()
     if t.isdigit():
-        return next((l for l in lots if l.id == int(t)), None)
+        return next((lt for lt in lots if lt.id == int(t)), None)
     for lot in lots:
         if t in lot.name.lower():
             return lot
@@ -238,7 +236,7 @@ def _resolve_lot(text: str, lots: list[ParkingLot]) -> Optional[ParkingLot]:
         (["airport", "connector", "transit"], "airport"),
     ]:
         if any(kw in t for kw in keywords):
-            return next((l for l in lots if fragment in l.name.lower()), None)
+            return next((lt for lt in lots if fragment in lt.name.lower()), None)
     return None
 
 
@@ -625,8 +623,10 @@ def _handle_confirm(
         )
     except ValidationError as exc:
         lots = db.query(ParkingLot).order_by(ParkingLot.id).all()
-        data.lot_id = None; data.lot_name = ""
-        data.start_dt = None; data.end_dt = None
+        data.lot_id = None
+        data.lot_name = ""
+        data.start_dt = None
+        data.end_dt = None
         data.state = ReservationState.ASK_LOT
         return ReplyResult(
             message=(

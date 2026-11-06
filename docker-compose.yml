@@ -1,15 +1,60 @@
 ###############################################################################
-# CityPark RAG Chatbot — Stage 2 docker-compose
+# CityPark RAG Chatbot — Stage 3 docker-compose
 #
 # Default services (always started):
-#   api   FastAPI backend on :8000
-#   ui    Combined Streamlit app (Chat + Admin Panel) on :8501
+#   api         FastAPI backend on :8000
+#   ui          Combined Streamlit app (Chat + Admin Panel) on :8501
+#   mcp-server  MCP server that appends approved reservations to a text file.
+#               NOT published to the host: it sits on an internal-only network
+#               (mcp_net) that only the api container also joins.
+#
+# MCP_API_KEY is required (no default on purpose).  Put it in .env:
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
 #
 # Optional profile — enables the Mailpit SMTP capture service:
 #   docker compose --profile mailpit up
 ###############################################################################
 
 services:
+
+  # ── MCP reservations server (Stage 3) ───────────────────────────────────────
+  # Bound to 0.0.0.0 INSIDE the container only so the api container can reach it
+  # over mcp_net; that network is `internal: true` and the service has no `ports`.
+  # Container-specific values are fixed here (not interpolated from .env) so the
+  # host-oriented values in .env.example (127.0.0.1, relative paths) can't break it.
+  mcp-server:
+    build:
+      context: .
+      target: runtime
+    image: parking-rag-api:latest
+    entrypoint: ["python", "scripts/run_mcp_server.py"]
+    environment:
+      MCP_API_KEY: ${MCP_API_KEY:?Set MCP_API_KEY in .env (see .env.example)}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8765"
+      RESERVATIONS_FILE: /data/output/confirmed_reservations.txt
+      ANONYMIZED_TELEMETRY: "false"
+    volumes:
+      - mcp_output:/data/output
+    networks:
+      - mcp_net
+    expose:
+      - "8765"
+    # Least privilege: the server only needs to write /data/output.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8765/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   # ── API backend ─────────────────────────────────────────────────────────────
   api:
@@ -24,8 +69,17 @@ services:
       DATABASE_URL: sqlite:////data/parking.db
       ADMIN_API_BASE_URL: http://localhost:8000
       ANONYMIZED_TELEMETRY: "false"
+      # Stage 3: reach the MCP server over the internal network. These override
+      # the host-oriented MCP_* values that env_file may carry from .env.
+      MCP_SERVER_URL: http://mcp-server:8765/mcp
+      MCP_API_KEY: ${MCP_API_KEY:?Set MCP_API_KEY in .env (see .env.example)}
     volumes:
       - parking_data:/data
+    networks:
+      - default
+      - mcp_net
+    # No depends_on on purpose: an MCP outage must never stop approvals (the
+    # reservation stays CONFIRMED and the retry worker catches up).
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -53,7 +107,7 @@ services:
     env_file: .env
     environment:
       API_URL: http://api:8000
-      # ADMIN_API_KEY from env_file pre-fills the admin login form.
+      # ADMIN_API_KEY is entered manually at the Admin Panel login.
       ADMIN_API_KEY: ${ADMIN_API_KEY:-change-me-before-production}
     ports:
       - "8501:8501"
@@ -72,7 +126,17 @@ services:
       - "1025:1025"
     restart: unless-stopped
 
-# ── Named volume ─────────────────────────────────────────────────────────────
+# ── Networks ─────────────────────────────────────────────────────────────────
+networks:
+  # internal: true => no route to/from the host or the internet; only containers
+  # attached to it (mcp-server, api) can talk to each other on it.
+  mcp_net:
+    internal: true
+
+# ── Named volumes ────────────────────────────────────────────────────────────
 volumes:
   parking_data:
+    driver: local
+  # data/output of the MCP server: confirmed_reservations.txt + its .ids/.lock files
+  mcp_output:
     driver: local

@@ -22,8 +22,8 @@ single-use token embedded in the URL — no API key needed.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
-from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Security
@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.agents.admin_agent import AdminAgent
+from app.agents.reservation_writer import export_approved, export_note
 from app.agents.channels.tokens import TokenExpired, TokenInvalid, TokenUsed, consume, verify
 from app.agents.contracts import MessageType
 from app.core.config import settings
@@ -88,6 +89,15 @@ def get_admin_llm() -> BaseLLMClient:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _admin_id(admin_key: str) -> str:
+    """Stable, non-reversible admin identity for audit columns.
+
+    Previously "api:" + the first 8 characters of ADMIN_API_KEY, which put part of the
+    secret into the database and into API responses.
+    """
+    return "api:" + hashlib.sha256(admin_key.encode("utf-8")).hexdigest()[:8]
 
 
 def _mask_plate(plate: str) -> str:
@@ -151,6 +161,9 @@ class DecisionOut(BaseModel):
     decided_by: Optional[str] = None
     decided_at: Optional[str] = None
     reason: Optional[str] = None
+    # Approve only: was the line appended to the confirmed-reservations file?
+    file_written: Optional[bool] = None
+    file_note: Optional[str] = None
 
 
 class ApproveIn(BaseModel):
@@ -170,6 +183,8 @@ class AdminChatOut(BaseModel):
     response: str
     decision_made: bool = False
     reservation_id: Optional[int] = None
+    file_written: Optional[bool] = None   # admin-side note, approve only
+    file_note: Optional[str] = None
 
 
 class ActionResultOut(BaseModel):
@@ -177,6 +192,8 @@ class ActionResultOut(BaseModel):
     reservation_id: int
     status: str
     reason: Optional[str] = None
+    file_written: Optional[bool] = None
+    file_note: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -303,19 +320,25 @@ def approve(
         res = approve_reservation(
             db,
             reservation_id,
-            admin=f"api:{admin_key[:8]}",
+            admin=_admin_id(admin_key),
             note=body.note,
         )
     except ValidationError as exc:
         raise HTTPException(status_code=_repo_http_status(exc), detail=str(exc))
 
-    logger.info("admin_api|approved reservation_id=%d", reservation_id)
+    # The approval is committed; the file write is best-effort and never rolls it back.
+    file_written = export_approved(db, res.id)
+    logger.info(
+        "admin_api|approved reservation_id=%d file_written=%s", reservation_id, file_written
+    )
     return {
         "reservation_id": res.id,
         "status":         res.status.value,
         "decided_by":     res.decided_by,
         "decided_at":     res.decided_at.isoformat() if res.decided_at else None,
         "reason":         res.admin_decision_reason,
+        "file_written":   file_written,
+        "file_note":      export_note(file_written),
     }
 
 
@@ -339,7 +362,7 @@ def refuse(
         res = refuse_reservation(
             db,
             reservation_id,
-            admin=f"api:{admin_key[:8]}",
+            admin=_admin_id(admin_key),
             reason=body.reason,
         )
     except ValidationError as exc:
@@ -380,7 +403,7 @@ def admin_chat(
     The LLM only parses text — it never executes a decision autonomously
     (see AdminAgent safety invariant).
     """
-    admin_id = f"api:{admin_key[:8]}"
+    admin_id = _admin_id(admin_key)
     agent = AdminAgent(lambda: db, llm=llm)
 
     # Phase 2: parse decision (safety gate: no LLM call unless clear keyword)
@@ -407,6 +430,8 @@ def admin_chat(
         response=notification_text,
         decision_made=True,
         reservation_id=result.reservation_id,
+        file_written=msg.payload.get("file_written"),
+        file_note=msg.payload.get("file_note"),
     )
 
 
@@ -456,11 +481,16 @@ def email_approve(
     except ValidationError as exc:
         raise HTTPException(status_code=_repo_http_status(exc), detail=str(exc))
 
-    logger.info("admin_api|email_approve reservation_id=%d", reservation_id)
+    file_written = export_approved(db, res.id)
+    logger.info(
+        "admin_api|email_approve reservation_id=%d file_written=%s", reservation_id, file_written
+    )
     return {
         "message":        f"Reservation #{reservation_id} has been approved",
         "reservation_id": reservation_id,
         "status":         "confirmed",
+        "file_written":   file_written,
+        "file_note":      export_note(file_written),
     }
 
 
@@ -504,7 +534,7 @@ def email_refuse(
     reason: str = (data.get("rsn") or "").strip() or "Refused via email link"
 
     try:
-        res = refuse_reservation(db, reservation_id, admin="email-link", reason=reason)
+        refuse_reservation(db, reservation_id, admin="email-link", reason=reason)
     except ValidationError as exc:
         raise HTTPException(status_code=_repo_http_status(exc), detail=str(exc))
 
